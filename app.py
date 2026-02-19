@@ -19,12 +19,12 @@ HEAT_SCALES = {
     "Posted": [[0, "#1a0000"], [0.3, "#990000"], [0.65, "#ff4400"], [1.0, "#ffee00"]],
 }
 
-# Marker symbols: square = Gifted, circle = Posted (same size)
+# Marker symbols: solid circle = Gifted, hollow circle = Posted (same size)
 TYPE_SYMBOL = {
-    "Gifted": "square",
-    "Posted": "circle",
+    "Gifted": "circle",
+    "Posted": "circle-stroked",
 }
-MARKER_SIZE = 10  # same size for both types
+MARKER_SIZE = 11  # same size for both types
 
 
 def generate_client_colors(clients):
@@ -456,7 +456,7 @@ if st.session_state["agg"] is not None:
             )
     type_legend = (
         '<span style="opacity:0.7;font-size:13px;">'
-        '&nbsp; ■ Square = Gifted &nbsp;|&nbsp; ● Circle = Posted &nbsp;|&nbsp;'
+        '&nbsp; ● Solid = Gifted &nbsp;|&nbsp; ○ Hollow = Posted &nbsp;|&nbsp;'
         ' Heat glow: <span style="color:#66ffff">■</span> Gifted &nbsp;'
         '<span style="color:#ffaa00">■</span> Posted</span>'
     )
