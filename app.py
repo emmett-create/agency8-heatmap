@@ -39,7 +39,7 @@ def generate_client_colors(clients):
     colors = {}
     for i, client in enumerate(sorted(clients)):
         hue        = i / n                          # evenly spaced around color wheel
-        lightness  = 0.62                           # bright enough to see on dark background
+        lightness  = 0.45                           # darker base so neon Posted dots pop
         saturation = 0.88
         r, g, b    = colorsys.hls_to_rgb(hue, lightness, saturation)
         colors[client] = "#{:02x}{:02x}{:02x}".format(
