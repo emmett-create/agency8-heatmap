@@ -19,13 +19,19 @@ HEAT_SCALES = {
     "Posted": [[0, "#1a0000"], [0.3, "#990000"], [0.65, "#ff4400"], [1.0, "#ffee00"]],
 }
 
-# Both types use circles (mapbox doesn't support other shapes reliably).
-# Gifted = bold/solid, Posted = faded/ghostly — same size, same client color.
-TYPE_OPACITY = {
-    "Gifted": 0.92,
-    "Posted": 0.30,
+# Gifted = large dot, Posted = small dot. Both full opacity, same client color.
+TYPE_BASE_SIZE = {
+    "Gifted": 11,
+    "Posted": 5,
 }
-MARKER_SIZE = 12
+TYPE_SCALE = {
+    "Gifted": 3,   # grows more with count
+    "Posted": 1.5,
+}
+TYPE_OPACITY = {
+    "Gifted": 0.90,
+    "Posted": 0.85,
+}
 
 
 def generate_client_colors(clients):
@@ -113,8 +119,10 @@ def build_volume_map(agg, client_colors):
                 lines.append(f"Handles: {r['sample_handles']}")
                 return "<br>".join(lines)
 
-            # Dot size scales with count (bigger zip = bigger dot)
-            sizes = subset["count"].apply(lambda x: min(7 + x * 3, 36)).tolist()
+            # Gifted = large dot, Posted = small dot. Both scale with count.
+            base  = TYPE_BASE_SIZE.get(type_, 8)
+            scale = TYPE_SCALE.get(type_, 2)
+            sizes = subset["count"].apply(lambda x: min(base + x * scale, base * 3)).tolist()
 
             fig.add_trace(go.Scattermapbox(
                 lat=subset["lat"].tolist(),
@@ -175,11 +183,8 @@ def build_conversion_map(zip_stats):
         colorscale=CONVERSION_SCALE,
         showscale=True,
         colorbar=dict(
-            title="Post Rate %",
+            title=dict(text="Post Rate %"),
             ticksuffix="%",
-            bgcolor="rgba(0,0,0,0.5)",
-            tickfont=dict(color="white"),
-            titlefont=dict(color="white"),
         ),
         opacity=0.75,
         showlegend=False,
@@ -198,7 +203,7 @@ def build_conversion_map(zip_stats):
     ))
 
     fig.update_layout(
-        mapbox_style="carto-darkmatter",
+        mapbox_style="carto-positron",
         mapbox_center={"lat": 38.5, "lon": -96},
         mapbox_zoom=3,
         height=620,
@@ -443,8 +448,8 @@ if st.session_state["agg"] is not None:
             )
     type_legend = (
         '<span style="opacity:0.7;font-size:13px;">'
-        '&nbsp; ● Bold = Gifted &nbsp;|&nbsp; ● Faded = Posted &nbsp;|&nbsp;'
-        ' Larger dot = more people in that area</span>'
+        '&nbsp; ⬤ Large dot = Gifted &nbsp;|&nbsp; • Small dot = Posted &nbsp;|&nbsp;'
+        ' Bigger = more people in that area</span>'
     )
     st.markdown(
         f'<div style="padding:6px 0 10px 0;">'
