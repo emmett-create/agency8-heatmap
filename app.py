@@ -19,12 +19,13 @@ HEAT_SCALES = {
     "Posted": [[0, "#1a0000"], [0.3, "#990000"], [0.65, "#ff4400"], [1.0, "#ffee00"]],
 }
 
-# Marker symbols: solid circle = Gifted, hollow circle = Posted (same size)
-TYPE_SYMBOL = {
-    "Gifted": "circle",
-    "Posted": "circle-stroked",
+# Both types use circles (mapbox doesn't support other shapes reliably).
+# Gifted = bold/solid, Posted = faded/ghostly — same size, same client color.
+TYPE_OPACITY = {
+    "Gifted": 0.92,
+    "Posted": 0.30,
 }
-MARKER_SIZE = 11  # same size for both types
+MARKER_SIZE = 12
 
 
 def generate_client_colors(clients):
@@ -136,8 +137,7 @@ def build_volume_map(agg, client_colors):
                 marker=dict(
                     size=MARKER_SIZE,
                     color=client_colors.get(client, "#ffffff"),
-                    symbol=TYPE_SYMBOL.get(type_, "circle"),
-                    opacity=0.85,
+                    opacity=TYPE_OPACITY.get(type_, 0.85),
                 ),
                 text=subset.apply(hover_text, axis=1).tolist(),
                 hoverinfo="text",
@@ -456,7 +456,7 @@ if st.session_state["agg"] is not None:
             )
     type_legend = (
         '<span style="opacity:0.7;font-size:13px;">'
-        '&nbsp; ● Solid = Gifted &nbsp;|&nbsp; ○ Hollow = Posted &nbsp;|&nbsp;'
+        '&nbsp; ● Bold = Gifted &nbsp;|&nbsp; ● Faded = Posted &nbsp;|&nbsp;'
         ' Heat glow: <span style="color:#66ffff">■</span> Gifted &nbsp;'
         '<span style="color:#ffaa00">■</span> Posted</span>'
     )
