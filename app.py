@@ -11,28 +11,29 @@ st.set_page_config(page_title="Agency 8 — Heat Map", layout="wide")
 
 # ── Color scales ──────────────────────────────────────────────────────────────────
 
-COLOR_SCALES = {
-    "Gifted": [[0, "#6baed6"], [1, "#08306b"]],  # medium → dark blue
-    "Posted": [[0, "#fc8d59"], [1, "#67000d"]],  # medium orange → dark red
+# Heat map gradients (dark background → bright = high density)
+HEAT_SCALES = {
+    "Gifted": [[0, "#000033"], [0.3, "#003399"], [0.65, "#0099ff"], [1.0, "#66ffff"]],
+    "Posted": [[0, "#1a0000"], [0.3, "#990000"], [0.65, "#ff4400"], [1.0, "#ffee00"]],
+}
+
+# Small dot colors shown on top of heat layer
+DOT_COLORS = {
+    "Gifted": "#66ccff",
+    "Posted": "#ffaa44",
 }
 
 LEGEND_HTML = """
-<div style="display:flex; gap:28px; align-items:center; padding:8px 0 4px 0; font-size:14px;">
+<div style="display:flex; gap:32px; align-items:center; padding:8px 0 4px 0; font-size:14px;">
     <div style="display:flex; align-items:center; gap:8px;">
-        <div style="display:flex; gap:3px; align-items:center;">
-            <div style="width:12px;height:12px;border-radius:50%;background:#6baed6;opacity:0.9"></div>
-            <div style="width:16px;height:16px;border-radius:50%;background:#2171b5;opacity:0.9"></div>
-            <div style="width:20px;height:20px;border-radius:50%;background:#08306b;opacity:0.9"></div>
-        </div>
-        <span><b>Gifted</b> — light = fewer, dark = more</span>
+        <div style="width:70px; height:14px; border-radius:4px;
+             background:linear-gradient(to right,#000033,#003399,#0099ff,#66ffff);"></div>
+        <span><b>Gifted</b> — dim = few &nbsp;→&nbsp; bright cyan = many</span>
     </div>
     <div style="display:flex; align-items:center; gap:8px;">
-        <div style="display:flex; gap:3px; align-items:center;">
-            <div style="width:12px;height:12px;border-radius:50%;background:#fc8d59;opacity:0.9"></div>
-            <div style="width:16px;height:16px;border-radius:50%;background:#de2d26;opacity:0.9"></div>
-            <div style="width:20px;height:20px;border-radius:50%;background:#67000d;opacity:0.9"></div>
-        </div>
-        <span><b>Posted</b> — light = fewer, dark = more</span>
+        <div style="width:70px; height:14px; border-radius:4px;
+             background:linear-gradient(to right,#1a0000,#990000,#ff4400,#ffee00);"></div>
+        <span><b>Posted</b> — dim = few &nbsp;→&nbsp; bright yellow = many</span>
     </div>
 </div>
 """
@@ -74,12 +75,28 @@ def geocode_zip_codes(zip_codes):
 
 def build_map(agg):
     fig = go.Figure()
+    types = sorted(agg["type"].unique())
 
-    # Cap color scale at 75th percentile so gradient is visible even when
-    # most zip codes have count=1
-    color_max = max(float(agg["count"].quantile(0.75)), 2)
+    # ── Layer 1: heat blobs (one per type, all clients combined) ─────────────────
+    for type_ in types:
+        subset_type = agg[agg["type"] == type_]
+        if subset_type.empty:
+            continue
+        fig.add_trace(go.Densitymapbox(
+            lat=subset_type["lat"].tolist(),
+            lon=subset_type["lon"].tolist(),
+            z=subset_type["count"].tolist(),
+            radius=28,
+            colorscale=HEAT_SCALES.get(type_, [[0, "#000"], [1, "#fff"]]),
+            showscale=False,
+            opacity=0.70,
+            name=f"Heat — {type_}",
+            showlegend=False,
+            hoverinfo="skip",
+        ))
 
-    for type_ in sorted(agg["type"].unique()):
+    # ── Layer 2: small dots per type+client for hover tooltips ───────────────────
+    for type_ in types:
         for client in sorted(agg["client"].unique()):
             subset = agg[(agg["type"] == type_) & (agg["client"] == client)]
             if subset.empty:
@@ -103,14 +120,10 @@ def build_map(agg):
                 lon=subset["lon"].tolist(),
                 mode="markers",
                 marker=dict(
-                    size=subset["count"].apply(lambda x: min(8 + x * 5, 50)).tolist(),
-                    color=subset["count"].tolist(),
-                    colorscale=COLOR_SCALES.get(type_, [[0, "#aaa"], [1, "#333"]]),
-                    cmin=1,
-                    cmax=color_max,
-                    opacity=0.85,
+                    size=subset["count"].apply(lambda x: min(5 + x * 2, 14)).tolist(),
+                    color=DOT_COLORS.get(type_, "#ffffff"),
+                    opacity=0.75,
                     sizemode="diameter",
-                    showscale=False,
                 ),
                 text=subset.apply(hover_text, axis=1).tolist(),
                 hoverinfo="text",
@@ -119,7 +132,7 @@ def build_map(agg):
             ))
 
     fig.update_layout(
-        mapbox_style="carto-positron",
+        mapbox_style="carto-darkmatter",
         mapbox_center={"lat": 38.5, "lon": -96},
         mapbox_zoom=3,
         height=650,
