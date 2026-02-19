@@ -93,24 +93,7 @@ def build_volume_map(agg, client_colors):
     fig = go.Figure()
     types = sorted(agg["type"].unique())
 
-    # Layer 1: heat blobs by type
-    for type_ in types:
-        subset_type = agg[agg["type"] == type_]
-        if subset_type.empty:
-            continue
-        fig.add_trace(go.Densitymapbox(
-            lat=subset_type["lat"].tolist(),
-            lon=subset_type["lon"].tolist(),
-            z=subset_type["count"].tolist(),
-            radius=28,
-            colorscale=HEAT_SCALES.get(type_, [[0, "#000"], [1, "#fff"]]),
-            showscale=False,
-            opacity=0.70,
-            showlegend=False,
-            hoverinfo="skip",
-        ))
-
-    # Layer 2: markers colored by CLIENT, shape by TYPE (square=Gifted, circle=Posted)
+    # Dots only — no heat layer. Size scales with count so density is still visible.
     for type_ in types:
         for client in sorted(agg["client"].unique()):
             subset = agg[(agg["type"] == type_) & (agg["client"] == client)]
@@ -130,14 +113,18 @@ def build_volume_map(agg, client_colors):
                 lines.append(f"Handles: {r['sample_handles']}")
                 return "<br>".join(lines)
 
+            # Dot size scales with count (bigger zip = bigger dot)
+            sizes = subset["count"].apply(lambda x: min(7 + x * 3, 36)).tolist()
+
             fig.add_trace(go.Scattermapbox(
                 lat=subset["lat"].tolist(),
                 lon=subset["lon"].tolist(),
                 mode="markers",
                 marker=dict(
-                    size=MARKER_SIZE,
-                    color=client_colors.get(client, "#ffffff"),
+                    size=sizes,
+                    color=client_colors.get(client, "#888888"),
                     opacity=TYPE_OPACITY.get(type_, 0.85),
+                    sizemode="diameter",
                 ),
                 text=subset.apply(hover_text, axis=1).tolist(),
                 hoverinfo="text",
@@ -146,16 +133,16 @@ def build_volume_map(agg, client_colors):
             ))
 
     fig.update_layout(
-        mapbox_style="carto-darkmatter",
+        mapbox_style="carto-positron",
         mapbox_center={"lat": 38.5, "lon": -96},
         mapbox_zoom=3,
         height=620,
         margin=dict(t=10, b=0, l=0, r=0),
         legend=dict(
-            bgcolor="rgba(0,0,0,0.6)",
-            font=dict(color="white", size=12),
+            bgcolor="rgba(255,255,255,0.85)",
+            font=dict(color="#222", size=12),
             x=0.01, y=0.99,
-            bordercolor="#444",
+            bordercolor="#ccc",
             borderwidth=1,
         ),
     )
@@ -457,8 +444,7 @@ if st.session_state["agg"] is not None:
     type_legend = (
         '<span style="opacity:0.7;font-size:13px;">'
         '&nbsp; ● Bold = Gifted &nbsp;|&nbsp; ● Faded = Posted &nbsp;|&nbsp;'
-        ' Heat glow: <span style="color:#66ffff">■</span> Gifted &nbsp;'
-        '<span style="color:#ffaa00">■</span> Posted</span>'
+        ' Larger dot = more people in that area</span>'
     )
     st.markdown(
         f'<div style="padding:6px 0 10px 0;">'
