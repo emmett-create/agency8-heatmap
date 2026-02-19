@@ -1,4 +1,4 @@
-"""
+"
 Agency 8 — Influencer Heat Map (Streamlit Web App)
 """
 
@@ -19,19 +19,18 @@ HEAT_SCALES = {
     "Posted": [[0, "#1a0000"], [0.3, "#990000"], [0.65, "#ff4400"], [1.0, "#ffee00"]],
 }
 
-# Gifted = large dot, Posted = small dot. Both full opacity, same client color.
-TYPE_BASE_SIZE = {
-    "Gifted": 11,
-    "Posted": 5,
-}
-TYPE_SCALE = {
-    "Gifted": 3,   # grows more with count
-    "Posted": 1.5,
-}
-TYPE_OPACITY = {
-    "Gifted": 0.90,
-    "Posted": 0.85,
-}
+MARKER_BASE_SIZE = 10   # same for both Gifted and Posted
+MARKER_SCALE     = 2.5  # grows with count
+MARKER_OPACITY   = 0.90
+
+
+def neon_version(hex_color):
+    """Return a neon/electric variant of a hex color — same hue, max saturation, higher lightness."""
+    hex_color = hex_color.lstrip("#")
+    r, g, b   = [int(hex_color[i:i+2], 16) / 255 for i in (0, 2, 4)]
+    h, l, s   = colorsys.rgb_to_hls(r, g, b)
+    r2, g2, b2 = colorsys.hls_to_rgb(h, 0.72, 1.0)
+    return "#{:02x}{:02x}{:02x}".format(int(r2 * 255), int(g2 * 255), int(b2 * 255))
 
 
 def generate_client_colors(clients):
@@ -119,10 +118,11 @@ def build_volume_map(agg, client_colors):
                 lines.append(f"Handles: {r['sample_handles']}")
                 return "<br>".join(lines)
 
-            # Gifted = large dot, Posted = small dot. Both scale with count.
-            base  = TYPE_BASE_SIZE.get(type_, 8)
-            scale = TYPE_SCALE.get(type_, 2)
-            sizes = subset["count"].apply(lambda x: min(base + x * scale, base * 3)).tolist()
+            base_color = client_colors.get(client, "#888888")
+            dot_color  = base_color if type_ == "Gifted" else neon_version(base_color)
+            sizes = subset["count"].apply(
+                lambda x: min(MARKER_BASE_SIZE + x * MARKER_SCALE, MARKER_BASE_SIZE * 3)
+            ).tolist()
 
             fig.add_trace(go.Scattermapbox(
                 lat=subset["lat"].tolist(),
@@ -130,8 +130,8 @@ def build_volume_map(agg, client_colors):
                 mode="markers",
                 marker=dict(
                     size=sizes,
-                    color=client_colors.get(client, "#888888"),
-                    opacity=TYPE_OPACITY.get(type_, 0.85),
+                    color=dot_color,
+                    opacity=MARKER_OPACITY,
                     sizemode="diameter",
                 ),
                 text=subset.apply(hover_text, axis=1).tolist(),
@@ -440,16 +440,19 @@ if st.session_state["agg"] is not None:
     legend_parts = []
     for client, color in client_colors.items():
         if client in selected_clients:
+            neon = neon_version(color)
             legend_parts.append(
                 f'<span style="display:inline-flex;align-items:center;gap:5px;margin-right:16px;">'
                 f'<span style="width:12px;height:12px;border-radius:50%;'
                 f'background:{color};display:inline-block;"></span>'
+                f'<span style="width:12px;height:12px;border-radius:50%;'
+                f'background:{neon};display:inline-block;"></span>'
                 f'<b>{client}</b></span>'
             )
     type_legend = (
         '<span style="opacity:0.7;font-size:13px;">'
-        '&nbsp; ⬤ Large dot = Gifted &nbsp;|&nbsp; • Small dot = Posted &nbsp;|&nbsp;'
-        ' Bigger = more people in that area</span>'
+        '&nbsp; Left dot = Gifted &nbsp;|&nbsp; Right dot (neon) = Posted'
+        ' &nbsp;|&nbsp; Bigger = more people in that area</span>'
     )
     st.markdown(
         f'<div style="padding:6px 0 10px 0;">'
