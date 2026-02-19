@@ -2,41 +2,53 @@
 Agency 8 — Influencer Heat Map (Streamlit Web App)
 """
 
+import colorsys
 import streamlit as st
 import pandas as pd
 import pgeocode
 import plotly.graph_objects as go
+import plotly.express as px
 
 st.set_page_config(page_title="Agency 8 — Heat Map", layout="wide")
 
-# ── Color scales ──────────────────────────────────────────────────────────────────
+# ── Color config ──────────────────────────────────────────────────────────────────
 
-# Heat map gradients (dark background → bright = high density)
+# Heat map gradients (dark → bright = low → high density)
 HEAT_SCALES = {
     "Gifted": [[0, "#000033"], [0.3, "#003399"], [0.65, "#0099ff"], [1.0, "#66ffff"]],
     "Posted": [[0, "#1a0000"], [0.3, "#990000"], [0.65, "#ff4400"], [1.0, "#ffee00"]],
 }
 
-# Small dot colors shown on top of heat layer
-DOT_COLORS = {
-    "Gifted": "#66ccff",
-    "Posted": "#ffaa44",
+# Marker symbols: square = Gifted, circle = Posted (same size)
+TYPE_SYMBOL = {
+    "Gifted": "square",
+    "Posted": "circle",
 }
+MARKER_SIZE = 10  # same size for both types
 
-LEGEND_HTML = """
-<div style="display:flex; gap:32px; align-items:center; padding:8px 0 4px 0; font-size:14px;">
-    <div style="display:flex; align-items:center; gap:8px;">
-        <div style="width:70px; height:14px; border-radius:4px;
-             background:linear-gradient(to right,#000033,#003399,#0099ff,#66ffff);"></div>
-        <span><b>Gifted</b> — dim = few &nbsp;→&nbsp; bright cyan = many</span>
-    </div>
-    <div style="display:flex; align-items:center; gap:8px;">
-        <div style="width:70px; height:14px; border-radius:4px;
-             background:linear-gradient(to right,#1a0000,#990000,#ff4400,#ffee00);"></div>
-        <span><b>Posted</b> — dim = few &nbsp;→&nbsp; bright yellow = many</span>
-    </div>
-</div>
-"""
+
+def generate_client_colors(clients):
+    """Generate one visually distinct color per client, no limit on count."""
+    n = max(len(clients), 1)
+    colors = {}
+    for i, client in enumerate(sorted(clients)):
+        hue        = i / n                          # evenly spaced around color wheel
+        lightness  = 0.62                           # bright enough to see on dark background
+        saturation = 0.88
+        r, g, b    = colorsys.hls_to_rgb(hue, lightness, saturation)
+        colors[client] = "#{:02x}{:02x}{:02x}".format(
+            int(r * 255), int(g * 255), int(b * 255)
+        )
+    return colors
+
+# Conversion map: red = low post rate, green = high
+CONVERSION_SCALE = [
+    [0.0,  "#67000d"],
+    [0.25, "#d73027"],
+    [0.5,  "#fee08b"],
+    [0.75, "#1a9850"],
+    [1.0,  "#00441b"],
+]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────────
 
@@ -69,15 +81,18 @@ def geocode_zip_codes(zip_codes):
                 "lat":   row["latitude"],
                 "lon":   row["longitude"],
                 "place": f"{row['place_name']}, {row['state_name']}",
+                "state": str(row["state_name"]),
             }
     return lookup
 
 
-def build_map(agg):
+# ── Map builders ──────────────────────────────────────────────────────────────────
+
+def build_volume_map(agg, client_colors):
     fig = go.Figure()
     types = sorted(agg["type"].unique())
 
-    # ── Layer 1: heat blobs (one per type, all clients combined) ─────────────────
+    # Layer 1: heat blobs by type
     for type_ in types:
         subset_type = agg[agg["type"] == type_]
         if subset_type.empty:
@@ -90,12 +105,11 @@ def build_map(agg):
             colorscale=HEAT_SCALES.get(type_, [[0, "#000"], [1, "#fff"]]),
             showscale=False,
             opacity=0.70,
-            name=f"Heat — {type_}",
             showlegend=False,
             hoverinfo="skip",
         ))
 
-    # ── Layer 2: small dots per type+client for hover tooltips ───────────────────
+    # Layer 2: markers colored by CLIENT, shape by TYPE (square=Gifted, circle=Posted)
     for type_ in types:
         for client in sorted(agg["client"].unique()):
             subset = agg[(agg["type"] == type_) & (agg["client"] == client)]
@@ -120,25 +134,119 @@ def build_map(agg):
                 lon=subset["lon"].tolist(),
                 mode="markers",
                 marker=dict(
-                    size=subset["count"].apply(lambda x: min(5 + x * 2, 14)).tolist(),
-                    color=DOT_COLORS.get(type_, "#ffffff"),
-                    opacity=0.75,
-                    sizemode="diameter",
+                    size=MARKER_SIZE,
+                    color=client_colors.get(client, "#ffffff"),
+                    symbol=TYPE_SYMBOL.get(type_, "circle"),
+                    opacity=0.85,
                 ),
                 text=subset.apply(hover_text, axis=1).tolist(),
                 hoverinfo="text",
-                name=f"{type_} — {client}",
-                showlegend=False,
+                name=f"{client} ({type_})",
+                showlegend=True,
             ))
 
     fig.update_layout(
         mapbox_style="carto-darkmatter",
         mapbox_center={"lat": 38.5, "lon": -96},
         mapbox_zoom=3,
-        height=650,
-        margin=dict(t=20, b=0, l=0, r=0),
+        height=620,
+        margin=dict(t=10, b=0, l=0, r=0),
+        legend=dict(
+            bgcolor="rgba(0,0,0,0.6)",
+            font=dict(color="white", size=12),
+            x=0.01, y=0.99,
+            bordercolor="#444",
+            borderwidth=1,
+        ),
     )
     return fig
+
+
+def build_conversion_map(zip_stats):
+    """Heat map where color = post rate % (red=low, green=high)."""
+    fig = go.Figure()
+
+    # Only include zips where at least 1 gift was sent
+    data = zip_stats[zip_stats["gifted"] > 0].copy()
+    if data.empty:
+        return None
+
+    def hover(r):
+        return (
+            f"<b>{r['place']}</b><br>"
+            f"ZIP: {r['zip_code']}<br>"
+            f"Gifted: {int(r['gifted'])}<br>"
+            f"Posted: {int(r['posted'])}<br>"
+            f"Post Rate: {r['post_rate']:.0f}%"
+        )
+
+    fig.add_trace(go.Densitymapbox(
+        lat=data["lat"].tolist(),
+        lon=data["lon"].tolist(),
+        z=data["post_rate"].tolist(),
+        radius=28,
+        colorscale=CONVERSION_SCALE,
+        showscale=True,
+        colorbar=dict(
+            title="Post Rate %",
+            ticksuffix="%",
+            bgcolor="rgba(0,0,0,0.5)",
+            tickfont=dict(color="white"),
+            titlefont=dict(color="white"),
+        ),
+        opacity=0.75,
+        showlegend=False,
+        hoverinfo="skip",
+    ))
+
+    # Dot overlay for hover
+    fig.add_trace(go.Scattermapbox(
+        lat=data["lat"].tolist(),
+        lon=data["lon"].tolist(),
+        mode="markers",
+        marker=dict(size=7, color="white", opacity=0.0),
+        text=data.apply(hover, axis=1).tolist(),
+        hoverinfo="text",
+        showlegend=False,
+    ))
+
+    fig.update_layout(
+        mapbox_style="carto-darkmatter",
+        mapbox_center={"lat": 38.5, "lon": -96},
+        mapbox_zoom=3,
+        height=620,
+        margin=dict(t=10, b=0, l=0, r=0),
+    )
+    return fig
+
+
+# ── Analytics helpers ─────────────────────────────────────────────────────────────
+
+def build_zip_stats(agg):
+    gifted = agg[agg["type"] == "Gifted"].groupby("zip_code")["count"].sum().reset_index(name="gifted")
+    posted = agg[agg["type"] == "Posted"].groupby("zip_code")["count"].sum().reset_index(name="posted")
+    stats  = gifted.merge(posted, on="zip_code", how="left").fillna(0)
+    stats["post_rate"] = (stats["posted"] / stats["gifted"].replace(0, float("nan")) * 100).round(1)
+    geo = agg[["zip_code", "lat", "lon", "place", "state"]].drop_duplicates("zip_code")
+    return stats.merge(geo, on="zip_code", how="left")
+
+
+def build_state_stats(zip_stats):
+    state = (
+        zip_stats.groupby("state")
+        .agg(gifted=("gifted", "sum"), posted=("posted", "sum"))
+        .reset_index()
+    )
+    state["post_rate"] = (state["posted"] / state["gifted"].replace(0, float("nan")) * 100).round(1)
+    return state.sort_values("post_rate", ascending=False)
+
+
+def build_client_stats(agg):
+    gifted = agg[agg["type"] == "Gifted"].groupby("client")["count"].sum().reset_index(name="gifted")
+    posted = agg[agg["type"] == "Posted"].groupby("client")["count"].sum().reset_index(name="posted")
+    stats  = gifted.merge(posted, on="client", how="left").fillna(0)
+    stats["post_rate"] = (stats["posted"] / stats["gifted"].replace(0, float("nan")) * 100).round(1)
+    return stats.sort_values("post_rate", ascending=False)
 
 
 # ── Session state ─────────────────────────────────────────────────────────────────
@@ -168,10 +276,10 @@ for i in range(int(n_clients)):
         col_gift, col_archive = st.columns(2)
         with col_gift:
             st.markdown("**Gift App CSV**")
-            gift_file = st.file_uploader("Upload gift app CSV", type="csv", key=f"gift_{i}", label_visibility="collapsed")
+            gift_file = st.file_uploader("gift", type="csv", key=f"gift_{i}", label_visibility="collapsed")
         with col_archive:
             st.markdown("**Posted CSV (from Archive)**")
-            archive_file = st.file_uploader("Upload posted CSV", type="csv", key=f"archive_{i}", label_visibility="collapsed")
+            archive_file = st.file_uploader("archive", type="csv", key=f"archive_{i}", label_visibility="collapsed")
 
         gift_col_config    = None
         archive_col_config = None
@@ -289,6 +397,7 @@ if st.button("Generate Map", type="primary", use_container_width=True):
         agg["lat"]   = agg["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("lat"))
         agg["lon"]   = agg["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("lon"))
         agg["place"] = agg["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("place", "Unknown"))
+        agg["state"] = agg["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("state", "Unknown"))
         agg = agg.dropna(subset=["lat", "lon"])
 
         st.session_state["agg"]             = agg
@@ -296,49 +405,171 @@ if st.button("Generate Map", type="primary", use_container_width=True):
         st.session_state["total_posted"]    = len(all_posted)
         st.session_state["total_unmatched"] = total_unmatched
 
-# ── Map display + filters ─────────────────────────────────────────────────────────
+# ── Display ───────────────────────────────────────────────────────────────────────
 
 if st.session_state["agg"] is not None:
     agg = st.session_state["agg"]
 
+    # Assign a color to each client
+    all_clients  = sorted(agg["client"].unique())
+    client_colors = generate_client_colors(all_clients)
+
     st.divider()
 
-    # Stats
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total Gifted",            st.session_state.get("total_gifted", "—"))
-    c2.metric("Posted & Matched",        st.session_state.get("total_posted", "—"))
-    c3.metric("Unmatched (not gifted)",  st.session_state.get("total_unmatched", "—"))
+    # ── Top metrics ───────────────────────────────────────────────────────────────
+    total_gifted  = st.session_state.get("total_gifted", 0)
+    total_posted  = st.session_state.get("total_posted", 0)
+    post_rate_pct = round(total_posted / total_gifted * 100, 1) if total_gifted else 0
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total Gifted",   f"{total_gifted:,}")
+    m2.metric("Total Posted",   f"{total_posted:,}")
+    m3.metric("Overall Post Rate", f"{post_rate_pct}%")
 
     st.markdown("#### Filters")
     f1, f2 = st.columns(2)
     with f1:
-        all_clients = sorted(agg["client"].unique())
         selected_clients = st.multiselect(
-            "Clients — select one or more",
-            options=all_clients,
-            default=all_clients,
+            "Clients", options=all_clients, default=all_clients,
         )
     with f2:
         all_types = sorted(agg["type"].unique())
         selected_types = st.multiselect(
-            "Type — Gifted, Posted, or both",
-            options=all_types,
-            default=all_types,
+            "Type", options=all_types, default=all_types,
         )
 
     filtered = agg[agg["client"].isin(selected_clients) & agg["type"].isin(selected_types)]
 
     if filtered.empty:
         st.warning("No data matches the current filters.")
-    else:
-        st.markdown(LEGEND_HTML, unsafe_allow_html=True)
-        fig = build_map(filtered)
-        st.plotly_chart(fig, use_container_width=True)
+        st.stop()
 
+    # ── Client color legend ───────────────────────────────────────────────────────
+    legend_parts = []
+    for client, color in client_colors.items():
+        if client in selected_clients:
+            legend_parts.append(
+                f'<span style="display:inline-flex;align-items:center;gap:5px;margin-right:16px;">'
+                f'<span style="width:12px;height:12px;border-radius:50%;'
+                f'background:{color};display:inline-block;"></span>'
+                f'<b>{client}</b></span>'
+            )
+    type_legend = (
+        '<span style="opacity:0.7;font-size:13px;">'
+        '&nbsp; ■ Square = Gifted &nbsp;|&nbsp; ● Circle = Posted &nbsp;|&nbsp;'
+        ' Heat glow: <span style="color:#66ffff">■</span> Gifted &nbsp;'
+        '<span style="color:#ffaa00">■</span> Posted</span>'
+    )
+    st.markdown(
+        f'<div style="padding:6px 0 10px 0;">'
+        f'{"".join(legend_parts)}{type_legend}</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Tabs ──────────────────────────────────────────────────────────────────────
+    tab_vol, tab_conv, tab_stats = st.tabs([
+        "Volume Map", "Conversion Rate Map", "Stats & Leaderboards"
+    ])
+
+    zip_stats   = build_zip_stats(agg)
+    state_stats = build_state_stats(zip_stats)
+
+    # ── Tab 1: Volume map ─────────────────────────────────────────────────────────
+    with tab_vol:
+        fig_vol = build_volume_map(filtered, client_colors)
+        st.plotly_chart(fig_vol, use_container_width=True)
         st.download_button(
-            label="Download map as standalone HTML",
-            data=fig.to_html(include_plotlyjs="cdn"),
-            file_name="agency8_heatmap.html",
-            mime="text/html",
+            "Download volume map as HTML",
+            data=fig_vol.to_html(include_plotlyjs="cdn"),
+            file_name="a8_volume_map.html", mime="text/html",
+        )
+
+    # ── Tab 2: Conversion rate map ────────────────────────────────────────────────
+    with tab_conv:
+        # Filter zip_stats to selected clients
+        filtered_zip = build_zip_stats(
+            agg[agg["client"].isin(selected_clients)]
+        )
+        fig_conv = build_conversion_map(filtered_zip)
+        if fig_conv:
+            st.caption(
+                "Color = post rate (% of gifted who posted). "
+                "**Red** = low conversion · **Green** = high conversion. "
+                "Only shows zip codes where at least 1 gift was sent."
+            )
+            st.plotly_chart(fig_conv, use_container_width=True)
+            st.download_button(
+                "Download conversion map as HTML",
+                data=fig_conv.to_html(include_plotlyjs="cdn"),
+                file_name="a8_conversion_map.html", mime="text/html",
+            )
+        else:
+            st.info("Not enough data to build conversion map.")
+
+    # ── Tab 3: Stats & leaderboards ───────────────────────────────────────────────
+    with tab_stats:
+
+        # Per-client breakdown
+        st.subheader("Per-Client Breakdown")
+        client_stats = build_client_stats(agg[agg["client"].isin(selected_clients)])
+        client_stats.columns = ["Client", "Gifts Sent", "Posts Received", "Post Rate %"]
+        st.dataframe(
+            client_stats.style.format({"Post Rate %": "{:.1f}%",
+                                        "Gifts Sent": "{:.0f}",
+                                        "Posts Received": "{:.0f}"}),
+            use_container_width=True, hide_index=True,
+        )
+
+        st.divider()
+
+        # State leaderboards
+        col_top, col_bot = st.columns(2)
+
+        with col_top:
+            st.subheader("Top 10 States — Best Post Rate")
+            st.caption("States where gifting converts to posts most effectively.")
+            top_states = (
+                state_stats[state_stats["gifted"] >= 2]
+                .head(10)
+                .reset_index(drop=True)
+            )
+            top_states.index += 1
+            top_states.columns = ["State", "Gifts", "Posts", "Post Rate %"]
+            st.dataframe(
+                top_states.style.format({"Post Rate %": "{:.1f}%",
+                                          "Gifts": "{:.0f}",
+                                          "Posts": "{:.0f}"}),
+                use_container_width=True,
+            )
+
+        with col_bot:
+            st.subheader("Dead Zones — Most Gifts, Lowest Return")
+            st.caption("States with the most gifts sent but lowest post rate.")
+            dead_zones = (
+                state_stats[state_stats["gifted"] >= 2]
+                .sort_values(["gifted", "post_rate"], ascending=[False, True])
+                .head(10)
+                .reset_index(drop=True)
+            )
+            dead_zones.index += 1
+            dead_zones.columns = ["State", "Gifts", "Posts", "Post Rate %"]
+            st.dataframe(
+                dead_zones.style.format({"Post Rate %": "{:.1f}%",
+                                          "Gifts": "{:.0f}",
+                                          "Posts": "{:.0f}"}),
+                use_container_width=True,
+            )
+
+        st.divider()
+
+        st.subheader("All States")
+        all_states = state_stats.reset_index(drop=True)
+        all_states.index += 1
+        all_states.columns = ["State", "Gifts", "Posts", "Post Rate %"]
+        st.dataframe(
+            all_states.style.format({"Post Rate %": "{:.1f}%",
+                                      "Gifts": "{:.0f}",
+                                      "Posts": "{:.0f}"}),
+            use_container_width=True,
         )
 
