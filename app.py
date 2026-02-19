@@ -1,7 +1,7 @@
 """
 Agency 8 — Influencer Heat Map (Streamlit Web App)
 
-Upload your gift app CSV and archive CSV(s) to generate an interactive heat map.
+Add one section per client, upload their gift app CSV + posted CSV, then generate the map.
 """
 
 import streamlit as st
@@ -32,7 +32,6 @@ def normalize_handle(h):
 
 
 def auto_detect(cols, hints):
-    """Return the first column whose name contains any hint (case-insensitive)."""
     for col in cols:
         if any(h.lower() in col.lower() for h in hints):
             return col
@@ -151,148 +150,175 @@ def build_map(agg):
 
 st.title("Agency 8 — Influencer Heat Map")
 st.markdown(
-    "Upload your CSVs, confirm the columns, and click **Generate Map**. "
+    "Add a section for each client, upload their CSVs, then click **Generate Map**. "
     "Dots are sized and colored by volume — darker = more activity."
 )
 st.divider()
 
-# ── Step 1: Gift app CSV ──────────────────────────────────────────────────────────
+# ── Client sections ───────────────────────────────────────────────────────────────
 
-st.subheader("Step 1 — Gift App CSV")
-gift_file = st.file_uploader("Upload your gift app CSV", type="csv", key="gift")
-
-gift_config = None
-if gift_file:
-    gift_raw = pd.read_csv(gift_file, dtype=str)
-    cols     = list(gift_raw.columns)
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        ig_default = auto_detect(cols, ["instagram", "ig handle", "ig_handle"])
-        ig_col = st.selectbox(
-            "Instagram handle column",
-            options=["(none)"] + cols,
-            index=cols.index(ig_default) + 1 if ig_default in cols else 0,
-        )
-    with c2:
-        tt_default = auto_detect(cols, ["tiktok", "tt handle", "tt_handle"])
-        tt_col = st.selectbox(
-            "TikTok handle column",
-            options=["(none)"] + cols,
-            index=cols.index(tt_default) + 1 if tt_default in cols else 0,
-        )
-    with c3:
-        zip_default = auto_detect(cols, ["zip", "postal", "postcode", "post code"])
-        zip_col = st.selectbox(
-            "Zip code column",
-            options=cols,
-            index=cols.index(zip_default) if zip_default in cols else 0,
-        )
-
-    gift_config = {"df": gift_raw, "ig": ig_col, "tt": tt_col, "zip": zip_col}
-
-# ── Step 2: Archive CSVs ──────────────────────────────────────────────────────────
-
-st.divider()
-st.subheader("Step 2 — Archive CSVs (who posted)")
-
-n_archive = st.number_input(
-    "How many Archive CSVs are you uploading?",
-    min_value=1, max_value=10, value=1, step=1,
+n_clients = st.number_input(
+    "How many clients are you uploading for?",
+    min_value=1, max_value=20, value=1, step=1,
 )
 
-archive_configs = []
-for i in range(int(n_archive)):
-    with st.expander(f"Archive CSV #{i + 1}", expanded=True):
-        af = st.file_uploader(f"Upload archive CSV #{i + 1}", type="csv", key=f"archive_{i}")
-        client_name = st.text_input(f"Client name", key=f"client_{i}", placeholder="e.g. Facile")
+client_configs = []
 
-        if af and client_name:
-            af_df = pd.read_csv(af, dtype=str)
-            af_cols = list(af_df.columns)
-            h_default = auto_detect(
-                af_cols,
-                ["handle", "username", "user", "social profile", "profile", "social", "account", "creator"],
+for i in range(int(n_clients)):
+    with st.expander(f"Client #{i + 1}", expanded=True):
+
+        client_name = st.text_input(
+            "Client name",
+            key=f"client_name_{i}",
+            placeholder="e.g. Facile",
+        )
+
+        col_gift, col_archive = st.columns(2)
+
+        with col_gift:
+            st.markdown("**Gift App CSV**")
+            gift_file = st.file_uploader(
+                "Upload gift app CSV",
+                type="csv",
+                key=f"gift_{i}",
+                label_visibility="collapsed",
             )
-            handle_col = st.selectbox(
-                "Handle column (who posted)",
-                options=af_cols,
-                index=af_cols.index(h_default) if h_default in af_cols else 0,
-                key=f"handle_col_{i}",
+
+        with col_archive:
+            st.markdown("**Posted CSV (from Archive)**")
+            archive_file = st.file_uploader(
+                "Upload posted CSV",
+                type="csv",
+                key=f"archive_{i}",
+                label_visibility="collapsed",
             )
-            archive_configs.append({
-                "df": af_df,
-                "handle_col": handle_col,
-                "client": client_name,
+
+        # Column pickers — shown only after files are uploaded
+        gift_col_config    = None
+        archive_col_config = None
+
+        if gift_file:
+            gift_df_raw = pd.read_csv(gift_file, dtype=str)
+            gcols = list(gift_df_raw.columns)
+            with st.expander("Gift app column settings", expanded=False):
+                gc1, gc2, gc3 = st.columns(3)
+                with gc1:
+                    ig_default = auto_detect(gcols, ["instagram", "ig handle", "ig_handle"])
+                    ig_col = st.selectbox(
+                        "Instagram handle",
+                        options=["(none)"] + gcols,
+                        index=gcols.index(ig_default) + 1 if ig_default in gcols else 0,
+                        key=f"ig_col_{i}",
+                    )
+                with gc2:
+                    tt_default = auto_detect(gcols, ["tiktok", "tt handle", "tt_handle"])
+                    tt_col = st.selectbox(
+                        "TikTok handle",
+                        options=["(none)"] + gcols,
+                        index=gcols.index(tt_default) + 1 if tt_default in gcols else 0,
+                        key=f"tt_col_{i}",
+                    )
+                with gc3:
+                    zip_default = auto_detect(gcols, ["zip", "postal", "postcode", "post code"])
+                    zip_col = st.selectbox(
+                        "Zip code",
+                        options=gcols,
+                        index=gcols.index(zip_default) if zip_default in gcols else 0,
+                        key=f"zip_col_{i}",
+                    )
+            gift_col_config = {"df": gift_df_raw, "ig": ig_col, "tt": tt_col, "zip": zip_col}
+
+        if archive_file:
+            archive_df_raw = pd.read_csv(archive_file, dtype=str)
+            acols = list(archive_df_raw.columns)
+            with st.expander("Posted CSV column settings", expanded=False):
+                h_default = auto_detect(
+                    acols,
+                    ["handle", "username", "user", "social profile", "profile", "social", "account", "creator"],
+                )
+                handle_col = st.selectbox(
+                    "Handle column (who posted)",
+                    options=acols,
+                    index=acols.index(h_default) if h_default in acols else 0,
+                    key=f"handle_col_{i}",
+                )
+            archive_col_config = {"df": archive_df_raw, "handle_col": handle_col}
+
+        if client_name and gift_col_config and archive_col_config:
+            client_configs.append({
+                "client":         client_name,
+                "gift_config":    gift_col_config,
+                "archive_config": archive_col_config,
             })
 
-# ── Step 3: Generate ─────────────────────────────────────────────────────────────
+# ── Generate ──────────────────────────────────────────────────────────────────────
 
 st.divider()
 generate = st.button("Generate Map", type="primary", use_container_width=True)
 
 if generate:
-    if not gift_config:
-        st.error("Please upload your gift app CSV first.")
+    if not client_configs:
+        st.error("Please fill in at least one client with both CSVs uploaded and a client name.")
         st.stop()
 
     with st.spinner("Processing data and geocoding zip codes..."):
 
-        # Build gift records
-        gift_rows = []
-        for _, row in gift_config["df"].iterrows():
-            ig  = normalize_handle(row[gift_config["ig"]]) if gift_config["ig"] != "(none)" else ""
-            tt  = normalize_handle(row[gift_config["tt"]]) if gift_config["tt"] != "(none)" else ""
-            raw = str(row.get(gift_config["zip"], "")).strip()
-            zip_code = raw.zfill(5)[:5] if raw and raw.lower() != "nan" else ""
-            if zip_code and (ig or tt):
-                gift_rows.append({"ig_handle": ig, "tt_handle": tt, "zip_code": zip_code})
+        all_gifted  = []
+        all_posted  = []
+        total_unmatched = 0
 
-        gift_df = pd.DataFrame(gift_rows)
+        for cfg in client_configs:
+            client      = cfg["client"]
+            gift_cfg    = cfg["gift_config"]
+            archive_cfg = cfg["archive_config"]
 
-        # Handle → zip lookup
-        handle_to_zip = {}
-        for _, row in gift_df.iterrows():
-            for h in [row["ig_handle"], row["tt_handle"]]:
-                if h:
-                    handle_to_zip[h] = row["zip_code"]
+            # Build gift records + handle→zip lookup for this client
+            gift_rows     = []
+            handle_to_zip = {}
 
-        # Build posted records
-        posted_records, unmatched = [], 0
-        for cfg in archive_configs:
+            for _, row in gift_cfg["df"].iterrows():
+                ig  = normalize_handle(row[gift_cfg["ig"]]) if gift_cfg["ig"] != "(none)" else ""
+                tt  = normalize_handle(row[gift_cfg["tt"]]) if gift_cfg["tt"] != "(none)" else ""
+                raw = str(row.get(gift_cfg["zip"], "")).strip()
+                zip_code = raw.zfill(5)[:5] if raw and raw.lower() != "nan" else ""
+                if zip_code and (ig or tt):
+                    gift_rows.append({"ig_handle": ig, "tt_handle": tt, "zip_code": zip_code})
+                    for h in [ig, tt]:
+                        if h:
+                            handle_to_zip[h] = zip_code
+
+            for r in gift_rows:
+                all_gifted.append({
+                    "handle":      r["ig_handle"] or r["tt_handle"],
+                    "client":      client,
+                    "zip_code":    r["zip_code"],
+                    "type":        "Gifted",
+                    "posts_total": "",
+                })
+
+            # Match posted users to zip codes for this client
             posts_col = next(
-                (c for c in cfg["df"].columns if "posts total" in c.lower() or "total posts" in c.lower()),
+                (c for c in archive_cfg["df"].columns
+                 if "posts total" in c.lower() or "total posts" in c.lower()),
                 None,
             )
-            for _, row in cfg["df"].iterrows():
-                h = normalize_handle(row[cfg["handle_col"]])
+            for _, row in archive_cfg["df"].iterrows():
+                h = normalize_handle(row[archive_cfg["handle_col"]])
                 if not h:
                     continue
                 z = handle_to_zip.get(h)
                 if z:
-                    posted_records.append({
+                    all_posted.append({
                         "handle":      h,
-                        "client":      cfg["client"],
+                        "client":      client,
                         "zip_code":    z,
                         "type":        "Posted",
                         "posts_total": str(row.get(posts_col, "")).strip() if posts_col else "",
                     })
                 else:
-                    unmatched += 1
+                    total_unmatched += 1
 
-        # Gifted records
-        gifted_records = [
-            {
-                "handle":      r["ig_handle"] or r["tt_handle"],
-                "client":      "All Clients",
-                "zip_code":    r["zip_code"],
-                "type":        "Gifted",
-                "posts_total": "",
-            }
-            for _, r in gift_df.iterrows()
-        ]
-
-        all_records = pd.DataFrame(gifted_records + posted_records)
+        all_records = pd.DataFrame(all_gifted + all_posted)
         if all_records.empty:
             st.error("No data to map. Check your CSV files and column selections.")
             st.stop()
@@ -312,7 +338,7 @@ if generate:
         )
 
         # Geocode
-        zip_lookup = geocode_zip_codes(agg["zip_code"].tolist())
+        zip_lookup   = geocode_zip_codes(agg["zip_code"].tolist())
         agg["lat"]   = agg["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("lat"))
         agg["lon"]   = agg["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("lon"))
         agg["place"] = agg["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("place", "Unknown"))
@@ -320,25 +346,24 @@ if generate:
 
     # Stats
     c1, c2, c3 = st.columns(3)
-    c1.metric("Gifted", len(gift_df))
-    c2.metric("Posted & Matched", len(posted_records))
-    c3.metric("Unmatched (no gift on file)", unmatched)
+    c1.metric("Total Gifted", len(all_gifted))
+    c2.metric("Posted & Matched", len(all_posted))
+    c3.metric("Unmatched (no gift on file)", total_unmatched)
 
     # Map
     fig = build_map(agg)
     st.plotly_chart(fig, use_container_width=True)
 
-    # Legend note
     st.caption(
         "**Blue dots** = gifted influencers &nbsp;|&nbsp; "
         "**Red dots** = influencers who posted &nbsp;|&nbsp; "
         "Darker color + larger dot = higher volume in that area."
     )
 
-    # Download
     st.download_button(
         label="Download map as standalone HTML",
         data=fig.to_html(include_plotlyjs="cdn"),
         file_name="agency8_heatmap.html",
         mime="text/html",
     )
+
