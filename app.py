@@ -1,7 +1,5 @@
 """
 Agency 8 — Influencer Heat Map (Streamlit Web App)
-
-Add one section per client, upload their gift app CSV + posted CSV, then generate the map.
 """
 
 import streamlit as st
@@ -9,19 +7,35 @@ import pandas as pd
 import pgeocode
 import plotly.graph_objects as go
 
-# ── Page config ───────────────────────────────────────────────────────────────────
-
-st.set_page_config(
-    page_title="Agency 8 — Heat Map",
-    layout="wide",
-)
+st.set_page_config(page_title="Agency 8 — Heat Map", layout="wide")
 
 # ── Color scales ──────────────────────────────────────────────────────────────────
 
 COLOR_SCALES = {
-    "Gifted": [[0, "#c6dbef"], [0.5, "#2171b5"], [1, "#08306b"]],  # light → dark blue
-    "Posted": [[0, "#fcbba1"], [0.5, "#de2d26"], [1, "#67000d"]],  # light → dark red
+    "Gifted": [[0, "#6baed6"], [1, "#08306b"]],  # medium → dark blue
+    "Posted": [[0, "#fc8d59"], [1, "#67000d"]],  # medium orange → dark red
 }
+
+LEGEND_HTML = """
+<div style="display:flex; gap:28px; align-items:center; padding:8px 0 4px 0; font-size:14px;">
+    <div style="display:flex; align-items:center; gap:8px;">
+        <div style="display:flex; gap:3px; align-items:center;">
+            <div style="width:12px;height:12px;border-radius:50%;background:#6baed6;opacity:0.9"></div>
+            <div style="width:16px;height:16px;border-radius:50%;background:#2171b5;opacity:0.9"></div>
+            <div style="width:20px;height:20px;border-radius:50%;background:#08306b;opacity:0.9"></div>
+        </div>
+        <span><b>Gifted</b> — light = fewer, dark = more</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px;">
+        <div style="display:flex; gap:3px; align-items:center;">
+            <div style="width:12px;height:12px;border-radius:50%;background:#fc8d59;opacity:0.9"></div>
+            <div style="width:16px;height:16px;border-radius:50%;background:#de2d26;opacity:0.9"></div>
+            <div style="width:20px;height:20px;border-radius:50%;background:#67000d;opacity:0.9"></div>
+        </div>
+        <span><b>Posted</b> — light = fewer, dark = more</span>
+    </div>
+</div>
+"""
 
 # ── Helpers ───────────────────────────────────────────────────────────────────────
 
@@ -60,12 +74,13 @@ def geocode_zip_codes(zip_codes):
 
 def build_map(agg):
     fig = go.Figure()
-    clients    = sorted(agg["client"].unique())
-    types      = sorted(agg["type"].unique())
-    global_max = max(agg["count"].max(), 1)
 
-    for type_ in types:
-        for client in clients:
+    # Cap color scale at 75th percentile so gradient is visible even when
+    # most zip codes have count=1
+    color_max = max(float(agg["count"].quantile(0.75)), 2)
+
+    for type_ in sorted(agg["type"].unique()):
+        for client in sorted(agg["client"].unique()):
             subset = agg[(agg["type"] == type_) & (agg["client"] == client)]
             if subset.empty:
                 continue
@@ -83,76 +98,45 @@ def build_map(agg):
                 lines.append(f"Handles: {r['sample_handles']}")
                 return "<br>".join(lines)
 
-            hover = subset.apply(hover_text, axis=1).tolist()
-            sizes = subset["count"].apply(lambda x: min(8 + x * 5, 50)).tolist()
-
             fig.add_trace(go.Scattermapbox(
                 lat=subset["lat"].tolist(),
                 lon=subset["lon"].tolist(),
                 mode="markers",
                 marker=dict(
-                    size=sizes,
+                    size=subset["count"].apply(lambda x: min(8 + x * 5, 50)).tolist(),
                     color=subset["count"].tolist(),
-                    colorscale=COLOR_SCALES.get(type_, [[0, "#ccc"], [1, "#333"]]),
+                    colorscale=COLOR_SCALES.get(type_, [[0, "#aaa"], [1, "#333"]]),
                     cmin=1,
-                    cmax=global_max,
+                    cmax=color_max,
                     opacity=0.85,
                     sizemode="diameter",
                     showscale=False,
                 ),
-                text=hover,
+                text=subset.apply(hover_text, axis=1).tolist(),
                 hoverinfo="text",
                 name=f"{type_} — {client}",
+                showlegend=False,
             ))
-
-    all_true = [True] * len(fig.data)
-    buttons  = [dict(label="All", method="update", args=[{"visible": all_true}])]
-
-    for client in clients:
-        vis = [client in t.name for t in fig.data]
-        buttons.append(dict(label=client, method="update", args=[{"visible": vis}]))
-
-    for type_ in types:
-        vis = [type_ in t.name for t in fig.data]
-        buttons.append(dict(label=f"{type_} only", method="update", args=[{"visible": vis}]))
 
     fig.update_layout(
         mapbox_style="carto-positron",
         mapbox_center={"lat": 38.5, "lon": -96},
         mapbox_zoom=3,
         height=650,
-        margin=dict(t=60, b=0, l=0, r=0),
-        updatemenus=[dict(
-            type="buttons",
-            direction="left",
-            buttons=buttons,
-            pad={"r": 10, "t": 10},
-            showactive=True,
-            x=0.0,
-            xanchor="left",
-            y=1.1,
-            yanchor="top",
-            bgcolor="white",
-            bordercolor="#cccccc",
-            font=dict(size=13),
-        )],
-        legend=dict(
-            x=0.01, y=0.99,
-            bgcolor="rgba(255,255,255,0.9)",
-            bordercolor="#cccccc",
-            borderwidth=1,
-        ),
+        margin=dict(t=20, b=0, l=0, r=0),
     )
     return fig
 
 
+# ── Session state ─────────────────────────────────────────────────────────────────
+
+if "agg" not in st.session_state:
+    st.session_state["agg"] = None
+
 # ── App UI ────────────────────────────────────────────────────────────────────────
 
 st.title("Agency 8 — Influencer Heat Map")
-st.markdown(
-    "Add a section for each client, upload their CSVs, then click **Generate Map**. "
-    "Dots are sized and colored by volume — darker = more activity."
-)
+st.markdown("Add a section per client, upload their CSVs, then click **Generate Map**.")
 st.divider()
 
 # ── Client sections ───────────────────────────────────────────────────────────────
@@ -166,34 +150,16 @@ client_configs = []
 
 for i in range(int(n_clients)):
     with st.expander(f"Client #{i + 1}", expanded=True):
-
-        client_name = st.text_input(
-            "Client name",
-            key=f"client_name_{i}",
-            placeholder="e.g. Facile",
-        )
+        client_name = st.text_input("Client name", key=f"client_name_{i}", placeholder="e.g. Facile")
 
         col_gift, col_archive = st.columns(2)
-
         with col_gift:
             st.markdown("**Gift App CSV**")
-            gift_file = st.file_uploader(
-                "Upload gift app CSV",
-                type="csv",
-                key=f"gift_{i}",
-                label_visibility="collapsed",
-            )
-
+            gift_file = st.file_uploader("Upload gift app CSV", type="csv", key=f"gift_{i}", label_visibility="collapsed")
         with col_archive:
             st.markdown("**Posted CSV (from Archive)**")
-            archive_file = st.file_uploader(
-                "Upload posted CSV",
-                type="csv",
-                key=f"archive_{i}",
-                label_visibility="collapsed",
-            )
+            archive_file = st.file_uploader("Upload posted CSV", type="csv", key=f"archive_{i}", label_visibility="collapsed")
 
-        # Column pickers — shown only after files are uploaded
         gift_col_config    = None
         archive_col_config = None
 
@@ -204,44 +170,30 @@ for i in range(int(n_clients)):
                 gc1, gc2, gc3 = st.columns(3)
                 with gc1:
                     ig_default = auto_detect(gcols, ["instagram", "ig handle", "ig_handle"])
-                    ig_col = st.selectbox(
-                        "Instagram handle",
-                        options=["(none)"] + gcols,
-                        index=gcols.index(ig_default) + 1 if ig_default in gcols else 0,
-                        key=f"ig_col_{i}",
-                    )
+                    ig_col = st.selectbox("Instagram handle", ["(none)"] + gcols,
+                                          index=gcols.index(ig_default) + 1 if ig_default in gcols else 0,
+                                          key=f"ig_col_{i}")
                 with gc2:
                     tt_default = auto_detect(gcols, ["tiktok", "tt handle", "tt_handle"])
-                    tt_col = st.selectbox(
-                        "TikTok handle",
-                        options=["(none)"] + gcols,
-                        index=gcols.index(tt_default) + 1 if tt_default in gcols else 0,
-                        key=f"tt_col_{i}",
-                    )
+                    tt_col = st.selectbox("TikTok handle", ["(none)"] + gcols,
+                                          index=gcols.index(tt_default) + 1 if tt_default in gcols else 0,
+                                          key=f"tt_col_{i}")
                 with gc3:
                     zip_default = auto_detect(gcols, ["zip", "postal", "postcode", "post code"])
-                    zip_col = st.selectbox(
-                        "Zip code",
-                        options=gcols,
-                        index=gcols.index(zip_default) if zip_default in gcols else 0,
-                        key=f"zip_col_{i}",
-                    )
+                    zip_col = st.selectbox("Zip code", gcols,
+                                           index=gcols.index(zip_default) if zip_default in gcols else 0,
+                                           key=f"zip_col_{i}")
             gift_col_config = {"df": gift_df_raw, "ig": ig_col, "tt": tt_col, "zip": zip_col}
 
         if archive_file:
             archive_df_raw = pd.read_csv(archive_file, dtype=str)
             acols = list(archive_df_raw.columns)
             with st.expander("Posted CSV column settings", expanded=False):
-                h_default = auto_detect(
-                    acols,
-                    ["handle", "username", "user", "social profile", "profile", "social", "account", "creator"],
-                )
-                handle_col = st.selectbox(
-                    "Handle column (who posted)",
-                    options=acols,
-                    index=acols.index(h_default) if h_default in acols else 0,
-                    key=f"handle_col_{i}",
-                )
+                h_default = auto_detect(acols, ["handle", "username", "user", "social profile",
+                                                 "profile", "social", "account", "creator"])
+                handle_col = st.selectbox("Handle column (who posted)", acols,
+                                          index=acols.index(h_default) if h_default in acols else 0,
+                                          key=f"handle_col_{i}")
             archive_col_config = {"df": archive_df_raw, "handle_col": handle_col}
 
         if client_name and gift_col_config and archive_col_config:
@@ -254,28 +206,20 @@ for i in range(int(n_clients)):
 # ── Generate ──────────────────────────────────────────────────────────────────────
 
 st.divider()
-generate = st.button("Generate Map", type="primary", use_container_width=True)
-
-if generate:
+if st.button("Generate Map", type="primary", use_container_width=True):
     if not client_configs:
-        st.error("Please fill in at least one client with both CSVs uploaded and a client name.")
+        st.error("Please fill in at least one client with both CSVs and a client name.")
         st.stop()
 
     with st.spinner("Processing data and geocoding zip codes..."):
-
-        all_gifted  = []
-        all_posted  = []
-        total_unmatched = 0
+        all_gifted, all_posted, total_unmatched = [], [], 0
 
         for cfg in client_configs:
             client      = cfg["client"]
             gift_cfg    = cfg["gift_config"]
             archive_cfg = cfg["archive_config"]
 
-            # Build gift records + handle→zip lookup for this client
-            gift_rows     = []
-            handle_to_zip = {}
-
+            gift_rows, handle_to_zip = [], {}
             for _, row in gift_cfg["df"].iterrows():
                 ig  = normalize_handle(row[gift_cfg["ig"]]) if gift_cfg["ig"] != "(none)" else ""
                 tt  = normalize_handle(row[gift_cfg["tt"]]) if gift_cfg["tt"] != "(none)" else ""
@@ -289,18 +233,14 @@ if generate:
 
             for r in gift_rows:
                 all_gifted.append({
-                    "handle":      r["ig_handle"] or r["tt_handle"],
-                    "client":      client,
-                    "zip_code":    r["zip_code"],
-                    "type":        "Gifted",
-                    "posts_total": "",
+                    "handle": r["ig_handle"] or r["tt_handle"],
+                    "client": client, "zip_code": r["zip_code"],
+                    "type": "Gifted", "posts_total": "",
                 })
 
-            # Match posted users to zip codes for this client
             posts_col = next(
                 (c for c in archive_cfg["df"].columns
-                 if "posts total" in c.lower() or "total posts" in c.lower()),
-                None,
+                 if "posts total" in c.lower() or "total posts" in c.lower()), None,
             )
             for _, row in archive_cfg["df"].iterrows():
                 h = normalize_handle(row[archive_cfg["handle_col"]])
@@ -309,10 +249,8 @@ if generate:
                 z = handle_to_zip.get(h)
                 if z:
                     all_posted.append({
-                        "handle":      h,
-                        "client":      client,
-                        "zip_code":    z,
-                        "type":        "Posted",
+                        "handle": h, "client": client, "zip_code": z,
+                        "type": "Posted",
                         "posts_total": str(row.get(posts_col, "")).strip() if posts_col else "",
                     })
                 else:
@@ -320,50 +258,74 @@ if generate:
 
         all_records = pd.DataFrame(all_gifted + all_posted)
         if all_records.empty:
-            st.error("No data to map. Check your CSV files and column selections.")
+            st.error("No data to map.")
             st.stop()
 
-        # Aggregate
         agg = (
             all_records
             .groupby(["zip_code", "type", "client"])
             .agg(
                 count=("handle", "count"),
                 sample_handles=("handle", lambda x: ", ".join(sorted(x.dropna().unique())[:5])),
-                total_posts=("posts_total", lambda x: sum(
-                    int(v) for v in x if str(v).strip().isdigit()
-                )),
+                total_posts=("posts_total", lambda x: sum(int(v) for v in x if str(v).strip().isdigit())),
             )
             .reset_index()
         )
 
-        # Geocode
         zip_lookup   = geocode_zip_codes(agg["zip_code"].tolist())
         agg["lat"]   = agg["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("lat"))
         agg["lon"]   = agg["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("lon"))
         agg["place"] = agg["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("place", "Unknown"))
         agg = agg.dropna(subset=["lat", "lon"])
 
+        st.session_state["agg"]             = agg
+        st.session_state["total_gifted"]    = len(all_gifted)
+        st.session_state["total_posted"]    = len(all_posted)
+        st.session_state["total_unmatched"] = total_unmatched
+
+# ── Map display + filters ─────────────────────────────────────────────────────────
+
+if st.session_state["agg"] is not None:
+    agg = st.session_state["agg"]
+
+    st.divider()
+
     # Stats
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total Gifted", len(all_gifted))
-    c2.metric("Posted & Matched", len(all_posted))
-    c3.metric("Unmatched (no gift on file)", total_unmatched)
+    c1.metric("Total Gifted",            st.session_state.get("total_gifted", "—"))
+    c2.metric("Posted & Matched",        st.session_state.get("total_posted", "—"))
+    c3.metric("Unmatched (not gifted)",  st.session_state.get("total_unmatched", "—"))
 
-    # Map
-    fig = build_map(agg)
-    st.plotly_chart(fig, use_container_width=True)
+    st.markdown("#### Filters")
+    f1, f2 = st.columns(2)
+    with f1:
+        all_clients = sorted(agg["client"].unique())
+        selected_clients = st.multiselect(
+            "Clients — select one or more",
+            options=all_clients,
+            default=all_clients,
+        )
+    with f2:
+        all_types = sorted(agg["type"].unique())
+        selected_types = st.multiselect(
+            "Type — Gifted, Posted, or both",
+            options=all_types,
+            default=all_types,
+        )
 
-    st.caption(
-        "**Blue dots** = gifted influencers &nbsp;|&nbsp; "
-        "**Red dots** = influencers who posted &nbsp;|&nbsp; "
-        "Darker color + larger dot = higher volume in that area."
-    )
+    filtered = agg[agg["client"].isin(selected_clients) & agg["type"].isin(selected_types)]
 
-    st.download_button(
-        label="Download map as standalone HTML",
-        data=fig.to_html(include_plotlyjs="cdn"),
-        file_name="agency8_heatmap.html",
-        mime="text/html",
-    )
+    if filtered.empty:
+        st.warning("No data matches the current filters.")
+    else:
+        st.markdown(LEGEND_HTML, unsafe_allow_html=True)
+        fig = build_map(filtered)
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.download_button(
+            label="Download map as standalone HTML",
+            data=fig.to_html(include_plotlyjs="cdn"),
+            file_name="agency8_heatmap.html",
+            mime="text/html",
+        )
 
