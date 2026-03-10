@@ -792,15 +792,21 @@ if st.session_state["agg"] is not None:
                 "Look for an uptick after the gifting line — that's your signal."
             )
 
-            with st.expander("🔍 Data check — click to verify what's loaded", expanded=False):
+            with st.expander("🔍 Data check — verify what's loaded", expanded=True):
                 st.write(f"**Shopify events loaded:** {len(shopify_events)} rows")
                 st.write(f"**Gift events loaded:** {len(gift_events)} rows")
                 if not shopify_events.empty:
-                    st.write(f"**Shopify states detected:** {sorted(shopify_events['state'].dropna().unique().tolist())}")
                     st.write(f"**Shopify date range:** {shopify_events['order_date'].min().date()} → {shopify_events['order_date'].max().date()}")
+                    shopify_by_state = shopify_events.groupby("state").size().reset_index(name="orders").sort_values("orders", ascending=False)
+                    st.write("**Shopify orders by state:**")
+                    st.dataframe(shopify_by_state, use_container_width=True, hide_index=True)
                 if not gift_events.empty:
-                    st.write(f"**Gift states detected:** {sorted(gift_events['state'].dropna().unique().tolist())}")
                     st.write(f"**Gift date range:** {gift_events['gift_date'].min().date()} → {gift_events['gift_date'].max().date()}")
+                    gift_by_state = gift_events.groupby("state").size().reset_index(name="gift_rows").sort_values("gift_rows", ascending=False)
+                    st.write("**Gift dated rows by state** (states NOT listed here will show the 'no gift dates' message):")
+                    st.dataframe(gift_by_state, use_container_width=True, hide_index=True)
+                else:
+                    st.warning("No gift events with dates were loaded. Check that the Gift Date column is set to 'Timestamp' (not '(none)') in the Gift App CSV column settings, then click Generate Map again.")
 
             # Filter to selected clients
             gev = gift_events[gift_events["client"].isin(selected_clients)].copy()
