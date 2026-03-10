@@ -484,7 +484,7 @@ if st.button("Generate Map", type="primary", use_container_width=True):
         if gift_events_list:
             gev = pd.DataFrame(gift_events_list)
             gev["state"] = gev["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("state"))
-            gev["gift_date"] = pd.to_datetime(gev["gift_date"], errors="coerce")
+            gev["gift_date"] = pd.to_datetime(gev["gift_date"], errors="coerce", utc=True).dt.tz_convert(None)
             st.session_state["gift_events_df"] = gev.dropna(subset=["gift_date", "state"])
         else:
             st.session_state["gift_events_df"] = None
@@ -493,7 +493,7 @@ if st.button("Generate Map", type="primary", use_container_width=True):
         if shopify_events_list:
             sev = pd.DataFrame(shopify_events_list)
             sev["state"] = sev["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("state"))
-            sev["order_date"] = pd.to_datetime(sev["order_date"], errors="coerce")
+            sev["order_date"] = pd.to_datetime(sev["order_date"], errors="coerce", utc=True).dt.tz_convert(None)
             st.session_state["shopify_events_df"] = sev.dropna(subset=["order_date", "state"])
         else:
             st.session_state["shopify_events_df"] = None
@@ -787,10 +787,6 @@ if st.session_state["agg"] is not None:
             # Filter to selected clients
             gev = gift_events[gift_events["client"].isin(selected_clients)].copy()
             sev = shopify_events[shopify_events["client"].isin(selected_clients)].copy()
-
-            # Strip timezone info so date subtraction works regardless of Shopify's format
-            gev["gift_date"]      = gev["gift_date"].dt.tz_localize(None) if gev["gift_date"].dt.tz is not None else gev["gift_date"]
-            sev["order_date"]     = sev["order_date"].dt.tz_localize(None) if sev["order_date"].dt.tz is not None else sev["order_date"]
 
             # First gift date per (client, state)
             first_gift = (
