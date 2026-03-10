@@ -318,7 +318,7 @@ for i in range(int(n_clients)):
                                            index=gcols.index(zip_default) if zip_default in gcols else 0,
                                            key=f"zip_col_{i}")
                 with gc4:
-                    date_default = auto_detect(gcols, ["date", "ship", "sent", "created", "gift date"])
+                    date_default = auto_detect(gcols, ["timestamp", "date", "ship", "sent", "created", "gift date"])
                     gift_date_col = st.selectbox("Gift date", ["(none)"] + gcols,
                                                  index=gcols.index(date_default) + 1 if date_default in gcols else 1,
                                                  key=f"gift_date_col_{i}")
@@ -830,19 +830,31 @@ if st.session_state["agg"] is not None:
             if not shopify_states:
                 st.warning("No states found in Shopify orders. Check that the zip code and date columns are selected correctly.")
             else:
-                selected_state = st.selectbox("Select a state to view", shopify_states, key="impact_state")
+                col_state, col_tf = st.columns([3, 1])
+                with col_state:
+                    selected_state = st.selectbox("Select a state to view", shopify_states, key="impact_state")
+                with col_tf:
+                    timeframe_options = {"All time": None, "3 months": 3, "6 months": 6, "1 year": 12, "2 years": 24}
+                    selected_tf = st.selectbox("Timeframe", list(timeframe_options.keys()), index=0, key="impact_timeframe")
+                    tf_months = timeframe_options[selected_tf]
 
                 state_orders = sev[sev["state"] == selected_state].copy()
+                if tf_months:
+                    cutoff = pd.Timestamp.now() - pd.DateOffset(months=tf_months)
+                    state_orders = state_orders[state_orders["order_date"] >= cutoff]
                 state_orders["month"] = state_orders["order_date"].dt.strftime("%Y-%m")
                 monthly = state_orders.groupby("month").size().reset_index(name="orders").sort_values("month")
 
-                # Build full month range (first gift or first order → today) so chart shows complete history
-                earliest_gift_ts = min(first_gift_date_by_state.values(), default=None)
-                earliest_order_ts = sev["order_date"].min() if not sev.empty else None
-                range_start = min(
-                    [d for d in [earliest_gift_ts, earliest_order_ts] if d is not None],
-                    default=pd.Timestamp.now() - pd.DateOffset(years=1),
-                )
+                # Build full month range for selected timeframe
+                if tf_months:
+                    range_start = pd.Timestamp.now() - pd.DateOffset(months=tf_months)
+                else:
+                    earliest_gift_ts = min(first_gift_date_by_state.values(), default=None)
+                    earliest_order_ts = sev["order_date"].min() if not sev.empty else None
+                    range_start = min(
+                        [d for d in [earliest_gift_ts, earliest_order_ts] if d is not None],
+                        default=pd.Timestamp.now() - pd.DateOffset(years=1),
+                    )
                 full_months = [
                     d.strftime("%Y-%m")
                     for d in pd.date_range(start=range_start.strftime("%Y-%m"), end=pd.Timestamp.now(), freq="MS")
@@ -880,7 +892,7 @@ if st.session_state["agg"] is not None:
                                 font=dict(color="white", size=11),
                             )
                     else:
-                        st.caption(f"ℹ️ {selected_state} was gifted but gift dates weren't detected — check the Gift Date column is selected.")
+                        st.caption(f"ℹ️ {selected_state} was gifted but no dated gift rows were found for this state — some rows may have blank dates in the Gift App CSV.")
                 else:
                     st.caption(f"ℹ️ No gifting recorded in {selected_state} yet — this is an untapped market.")
 
