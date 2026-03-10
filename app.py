@@ -322,14 +322,7 @@ for i in range(int(n_clients)):
                     gift_date_col = st.selectbox("Gift date", ["(none)"] + gcols,
                                                  index=gcols.index(date_default) + 1 if date_default in gcols else 1,
                                                  key=f"gift_date_col_{i}")
-            gift_year = None
-            if gift_date_col != "(none)":
-                gift_year = st.number_input(
-                    "Campaign year (e.g. 2024) — needed if dates show as M/D without a year",
-                    min_value=2018, max_value=2030, value=2024, step=1,
-                    key=f"gift_year_{i}",
-                )
-            gift_col_config = {"df": gift_df_raw, "ig": ig_col, "tt": tt_col, "zip": zip_col, "date": gift_date_col, "year": gift_year}
+            gift_col_config = {"df": gift_df_raw, "ig": ig_col, "tt": tt_col, "zip": zip_col, "date": gift_date_col}
 
         if archive_file:
             archive_df_raw = pd.read_csv(archive_file, dtype=str)
@@ -409,9 +402,9 @@ if st.button("Generate Map", type="primary", use_container_width=True):
                     raw = str(row.get(gift_cfg["zip"], "")).strip()
                     zip_code = raw.zfill(5)[:5] if raw and raw.lower() != "nan" else ""
                     date_str = str(row.get(gift_cfg["date"], "")).strip() if gift_cfg.get("date") and gift_cfg["date"] != "(none)" else ""
-                    # If date looks like M/D or MM/DD (no year), append the campaign year
-                    if date_str and date_str.count("/") == 1 and gift_cfg.get("year"):
-                        date_str = f"{date_str}/{int(gift_cfg['year'])}"
+                    # If date looks like M/D or MM/DD (no year), append the current year
+                    if date_str and date_str.count("/") == 1:
+                        date_str = f"{date_str}/{pd.Timestamp.now().year}"
                     if zip_code and (ig or tt):
                         gift_rows.append({"ig_handle": ig, "tt_handle": tt, "zip_code": zip_code})
                         for h in [ig, tt]:
@@ -498,10 +491,6 @@ if st.button("Generate Map", type="primary", use_container_width=True):
             gev = pd.DataFrame(gift_events_list)
             gev["state"] = gev["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("state"))
             gev["gift_date"] = pd.to_datetime(gev["gift_date"], errors="coerce")
-            st.session_state["debug_gift_valid_dates"]  = int(gev["gift_date"].notna().sum())
-            st.session_state["debug_gift_valid_states"] = int(gev["state"].notna().sum())
-            st.session_state["debug_gift_sample_date"]  = str(gev["gift_date"].dropna().iloc[0]) if gev["gift_date"].notna().any() else "all NaT"
-            st.session_state["debug_gift_sample_raw"]   = str(gift_events_list[0].get("gift_date", "?"))
             st.session_state["gift_events_df"] = gev.dropna(subset=["gift_date", "state"])
         else:
             st.session_state["gift_events_df"] = None
@@ -520,8 +509,6 @@ if st.button("Generate Map", type="primary", use_container_width=True):
         st.session_state["total_posted"]             = len(all_posted)
         st.session_state["total_shopify"]            = len(all_shopify)
         st.session_state["total_unmatched"]          = total_unmatched
-        st.session_state["debug_gift_events_raw"]    = len(gift_events_list)
-        st.session_state["debug_shopify_events_raw"] = len(shopify_events_list)
 
 # ── Display ───────────────────────────────────────────────────────────────────────
 
@@ -799,13 +786,6 @@ if st.session_state["agg"] is not None:
         if missing:
             st.warning("Gifting Impact needs date data from both CSVs. Missing:\n\n" + "\n\n".join(f"- {m}" for m in missing))
             st.info("Select the correct date columns in each CSV's column settings expander, then click **Generate Map** again.")
-            raw_gift    = st.session_state.get("debug_gift_events_raw", "n/a")
-            raw_shopify = st.session_state.get("debug_shopify_events_raw", "n/a")
-            valid_dates  = st.session_state.get("debug_gift_valid_dates", "n/a")
-            valid_states = st.session_state.get("debug_gift_valid_states", "n/a")
-            sample_raw   = st.session_state.get("debug_gift_sample_raw", "n/a")
-            sample_parsed = st.session_state.get("debug_gift_sample_date", "n/a")
-            st.caption(f"Debug: raw gift rows={raw_gift} | valid dates={valid_dates} | valid states={valid_states} | sample raw='{sample_raw}' → parsed='{sample_parsed}' | raw shopify rows={raw_shopify}")
         else:
             st.markdown(
                 "Shows monthly Shopify orders per state with a marker at the first gift date. "
