@@ -322,7 +322,14 @@ for i in range(int(n_clients)):
                     gift_date_col = st.selectbox("Gift date", ["(none)"] + gcols,
                                                  index=gcols.index(date_default) + 1 if date_default in gcols else 1,
                                                  key=f"gift_date_col_{i}")
-            gift_col_config = {"df": gift_df_raw, "ig": ig_col, "tt": tt_col, "zip": zip_col, "date": gift_date_col}
+            gift_year = None
+            if gift_date_col != "(none)":
+                gift_year = st.number_input(
+                    "Campaign year (e.g. 2024) — needed if dates show as M/D without a year",
+                    min_value=2018, max_value=2030, value=2024, step=1,
+                    key=f"gift_year_{i}",
+                )
+            gift_col_config = {"df": gift_df_raw, "ig": ig_col, "tt": tt_col, "zip": zip_col, "date": gift_date_col, "year": gift_year}
 
         if archive_file:
             archive_df_raw = pd.read_csv(archive_file, dtype=str)
@@ -402,6 +409,9 @@ if st.button("Generate Map", type="primary", use_container_width=True):
                     raw = str(row.get(gift_cfg["zip"], "")).strip()
                     zip_code = raw.zfill(5)[:5] if raw and raw.lower() != "nan" else ""
                     date_str = str(row.get(gift_cfg["date"], "")).strip() if gift_cfg.get("date") and gift_cfg["date"] != "(none)" else ""
+                    # If date looks like M/D or MM/DD (no year), append the campaign year
+                    if date_str and date_str.count("/") == 1 and gift_cfg.get("year"):
+                        date_str = f"{date_str}/{int(gift_cfg['year'])}"
                     if zip_code and (ig or tt):
                         gift_rows.append({"ig_handle": ig, "tt_handle": tt, "zip_code": zip_code})
                         for h in [ig, tt]:
