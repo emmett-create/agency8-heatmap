@@ -23,6 +23,8 @@ MARKER_BASE_SIZE = 10   # same for both Gifted and Posted
 MARKER_SCALE     = 2.5  # grows with count
 MARKER_OPACITY   = 0.90
 
+SHOPIFY_COLOR = "#9b59b6"  # medium purple — distinct from all client colors
+
 
 def neon_version(hex_color):
     """Return a neon/electric variant of a hex color — same hue, max saturation, higher lightness."""
@@ -106,20 +108,35 @@ def build_volume_map(agg, client_colors):
                 continue
 
             def hover_text(r):
-                lines = [
-                    f"<b>{r['place']}</b>",
-                    f"ZIP: {r['zip_code']}",
-                    f"People: {r['count']}",
-                    f"Type: {r['type']}",
-                    f"Client: {r['client']}",
-                ]
-                if r.get("total_posts", 0):
-                    lines.append(f"Total Posts: {int(r['total_posts'])}")
-                lines.append(f"Handles: {r['sample_handles']}")
+                if r["type"] == "Shopify Customers":
+                    lines = [
+                        f"<b>{r['place']}</b>",
+                        f"ZIP: {r['zip_code']}",
+                        f"Customers: {r['count']}",
+                        f"Client: {r['client']}",
+                    ]
+                    if r.get("revenue", 0):
+                        lines.append(f"Revenue: ${r['revenue']:,.2f}")
+                else:
+                    lines = [
+                        f"<b>{r['place']}</b>",
+                        f"ZIP: {r['zip_code']}",
+                        f"People: {r['count']}",
+                        f"Type: {r['type']}",
+                        f"Client: {r['client']}",
+                    ]
+                    if r.get("total_posts", 0):
+                        lines.append(f"Total Posts: {int(r['total_posts'])}")
+                    lines.append(f"Handles: {r['sample_handles']}")
                 return "<br>".join(lines)
 
             base_color = client_colors.get(client, "#888888")
-            dot_color  = base_color if type_ == "Gifted" else neon_version(base_color)
+            if type_ == "Shopify Customers":
+                dot_color = SHOPIFY_COLOR
+            elif type_ == "Gifted":
+                dot_color = base_color
+            else:
+                dot_color = neon_version(base_color)
             sizes = subset["count"].apply(
                 lambda x: min(MARKER_BASE_SIZE + x * MARKER_SCALE, MARKER_BASE_SIZE * 3)
             ).tolist()
@@ -265,16 +282,20 @@ for i in range(int(n_clients)):
     with st.expander(f"Client #{i + 1}", expanded=True):
         client_name = st.text_input("Client name", key=f"client_name_{i}", placeholder="e.g. Facile")
 
-        col_gift, col_archive = st.columns(2)
+        col_gift, col_archive, col_shopify = st.columns(3)
         with col_gift:
             st.markdown("**Gift App CSV**")
             gift_file = st.file_uploader("gift", type="csv", key=f"gift_{i}", label_visibility="collapsed")
         with col_archive:
             st.markdown("**Posted CSV (from Archive)**")
             archive_file = st.file_uploader("archive", type="csv", key=f"archive_{i}", label_visibility="collapsed")
+        with col_shopify:
+            st.markdown("**Shopify Customers CSV** *(optional)*")
+            shopify_file = st.file_uploader("shopify", type="csv", key=f"shopify_{i}", label_visibility="collapsed")
 
         gift_col_config    = None
         archive_col_config = None
+        shopify_col_config = None
 
         if gift_file:
             gift_df_raw = pd.read_csv(gift_file, dtype=str)
@@ -309,11 +330,33 @@ for i in range(int(n_clients)):
                                           key=f"handle_col_{i}")
             archive_col_config = {"df": archive_df_raw, "handle_col": handle_col}
 
-        if client_name and gift_col_config and archive_col_config:
+        if shopify_file:
+            shopify_df_raw = pd.read_csv(shopify_file, dtype=str)
+            scols = list(shopify_df_raw.columns)
+            with st.expander("Shopify column settings", expanded=False):
+                sc1, sc2 = st.columns(2)
+                with sc1:
+                    sz_default = auto_detect(scols, ["zip", "shipping zip", "billing zip", "postal"])
+                    shopify_zip_col = st.selectbox(
+                        "Zip code column", scols,
+                        index=scols.index(sz_default) if sz_default in scols else 0,
+                        key=f"shopify_zip_{i}",
+                    )
+                with sc2:
+                    rev_default = auto_detect(scols, ["total spent", "total", "revenue", "amount"])
+                    shopify_rev_col = st.selectbox(
+                        "Revenue column (optional)", ["(none)"] + scols,
+                        index=scols.index(rev_default) + 1 if rev_default in scols else 0,
+                        key=f"shopify_rev_{i}",
+                    )
+            shopify_col_config = {"df": shopify_df_raw, "zip": shopify_zip_col, "rev": shopify_rev_col}
+
+        if client_name and (gift_col_config or shopify_col_config):
             client_configs.append({
                 "client":         client_name,
                 "gift_config":    gift_col_config,
                 "archive_config": archive_col_config,
+                "shopify_config": shopify_col_config,
             })
 
 # ── Generate ──────────────────────────────────────────────────────────────────────
@@ -325,51 +368,76 @@ if st.button("Generate Map", type="primary", use_container_width=True):
         st.stop()
 
     with st.spinner("Processing data and geocoding zip codes..."):
-        all_gifted, all_posted, total_unmatched = [], [], 0
+        all_gifted, all_posted, all_shopify, total_unmatched = [], [], [], 0
 
         for cfg in client_configs:
             client      = cfg["client"]
-            gift_cfg    = cfg["gift_config"]
-            archive_cfg = cfg["archive_config"]
+            gift_cfg    = cfg.get("gift_config")
+            archive_cfg = cfg.get("archive_config")
+            shopify_cfg = cfg.get("shopify_config")
 
-            gift_rows, handle_to_zip = [], {}
-            for _, row in gift_cfg["df"].iterrows():
-                ig  = normalize_handle(row[gift_cfg["ig"]]) if gift_cfg["ig"] != "(none)" else ""
-                tt  = normalize_handle(row[gift_cfg["tt"]]) if gift_cfg["tt"] != "(none)" else ""
-                raw = str(row.get(gift_cfg["zip"], "")).strip()
-                zip_code = raw.zfill(5)[:5] if raw and raw.lower() != "nan" else ""
-                if zip_code and (ig or tt):
-                    gift_rows.append({"ig_handle": ig, "tt_handle": tt, "zip_code": zip_code})
-                    for h in [ig, tt]:
-                        if h:
-                            handle_to_zip[h] = zip_code
+            handle_to_zip = {}
 
-            for r in gift_rows:
-                all_gifted.append({
-                    "handle": r["ig_handle"] or r["tt_handle"],
-                    "client": client, "zip_code": r["zip_code"],
-                    "type": "Gifted", "posts_total": "",
-                })
+            if gift_cfg:
+                gift_rows = []
+                for _, row in gift_cfg["df"].iterrows():
+                    ig  = normalize_handle(row[gift_cfg["ig"]]) if gift_cfg["ig"] != "(none)" else ""
+                    tt  = normalize_handle(row[gift_cfg["tt"]]) if gift_cfg["tt"] != "(none)" else ""
+                    raw = str(row.get(gift_cfg["zip"], "")).strip()
+                    zip_code = raw.zfill(5)[:5] if raw and raw.lower() != "nan" else ""
+                    if zip_code and (ig or tt):
+                        gift_rows.append({"ig_handle": ig, "tt_handle": tt, "zip_code": zip_code})
+                        for h in [ig, tt]:
+                            if h:
+                                handle_to_zip[h] = zip_code
 
-            posts_col = next(
-                (c for c in archive_cfg["df"].columns
-                 if "posts total" in c.lower() or "total posts" in c.lower()), None,
-            )
-            for _, row in archive_cfg["df"].iterrows():
-                h = normalize_handle(row[archive_cfg["handle_col"]])
-                if not h:
-                    continue
-                z = handle_to_zip.get(h)
-                if z:
-                    all_posted.append({
-                        "handle": h, "client": client, "zip_code": z,
-                        "type": "Posted",
-                        "posts_total": str(row.get(posts_col, "")).strip() if posts_col else "",
+                for r in gift_rows:
+                    all_gifted.append({
+                        "handle": r["ig_handle"] or r["tt_handle"],
+                        "client": client, "zip_code": r["zip_code"],
+                        "type": "Gifted", "posts_total": "", "revenue": 0.0,
                     })
-                else:
-                    total_unmatched += 1
 
-        all_records = pd.DataFrame(all_gifted + all_posted)
+            if archive_cfg and gift_cfg:
+                posts_col = next(
+                    (c for c in archive_cfg["df"].columns
+                     if "posts total" in c.lower() or "total posts" in c.lower()), None,
+                )
+                for _, row in archive_cfg["df"].iterrows():
+                    h = normalize_handle(row[archive_cfg["handle_col"]])
+                    if not h:
+                        continue
+                    z = handle_to_zip.get(h)
+                    if z:
+                        all_posted.append({
+                            "handle": h, "client": client, "zip_code": z,
+                            "type": "Posted",
+                            "posts_total": str(row.get(posts_col, "")).strip() if posts_col else "",
+                            "revenue": 0.0,
+                        })
+                    else:
+                        total_unmatched += 1
+
+            if shopify_cfg:
+                for idx, row in shopify_cfg["df"].iterrows():
+                    raw = str(row.get(shopify_cfg["zip"], "")).strip()
+                    zip_code = raw.zfill(5)[:5] if raw and raw.lower() not in ("nan", "") else ""
+                    if not zip_code:
+                        continue
+                    rev = 0.0
+                    if shopify_cfg["rev"] != "(none)":
+                        rev_str = str(row.get(shopify_cfg["rev"], "")).strip().replace("$", "").replace(",", "")
+                        try:
+                            rev = float(rev_str)
+                        except ValueError:
+                            rev = 0.0
+                    all_shopify.append({
+                        "handle": f"customer_{idx}",
+                        "client": client, "zip_code": zip_code,
+                        "type": "Shopify Customers", "posts_total": "", "revenue": rev,
+                    })
+
+        all_records = pd.DataFrame(all_gifted + all_posted + all_shopify)
         if all_records.empty:
             st.error("No data to map.")
             st.stop()
@@ -381,6 +449,7 @@ if st.button("Generate Map", type="primary", use_container_width=True):
                 count=("handle", "count"),
                 sample_handles=("handle", lambda x: ", ".join(sorted(x.dropna().unique())[:5])),
                 total_posts=("posts_total", lambda x: sum(int(v) for v in x if str(v).strip().isdigit())),
+                revenue=("revenue", "sum"),
             )
             .reset_index()
         )
@@ -395,6 +464,7 @@ if st.button("Generate Map", type="primary", use_container_width=True):
         st.session_state["agg"]             = agg
         st.session_state["total_gifted"]    = len(all_gifted)
         st.session_state["total_posted"]    = len(all_posted)
+        st.session_state["total_shopify"]   = len(all_shopify)
         st.session_state["total_unmatched"] = total_unmatched
 
 # ── Display ───────────────────────────────────────────────────────────────────────
@@ -409,14 +479,16 @@ if st.session_state["agg"] is not None:
     st.divider()
 
     # ── Top metrics ───────────────────────────────────────────────────────────────
-    total_gifted  = st.session_state.get("total_gifted", 0)
-    total_posted  = st.session_state.get("total_posted", 0)
-    post_rate_pct = round(total_posted / total_gifted * 100, 1) if total_gifted else 0
+    total_gifted   = st.session_state.get("total_gifted", 0)
+    total_posted   = st.session_state.get("total_posted", 0)
+    total_shopify  = st.session_state.get("total_shopify", 0)
+    post_rate_pct  = round(total_posted / total_gifted * 100, 1) if total_gifted else 0
 
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Total Gifted",   f"{total_gifted:,}")
-    m2.metric("Total Posted",   f"{total_posted:,}")
-    m3.metric("Overall Post Rate", f"{post_rate_pct}%")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Gifted",          f"{total_gifted:,}")
+    m2.metric("Total Posted",          f"{total_posted:,}")
+    m3.metric("Overall Post Rate",     f"{post_rate_pct}%")
+    m4.metric("Shopify Customers",     f"{total_shopify:,}")
 
     st.markdown("#### Filters")
     f1, f2 = st.columns(2)
@@ -449,14 +521,20 @@ if st.session_state["agg"] is not None:
                 f'background:{neon};display:inline-block;"></span>'
                 f'<b>{client}</b></span>'
             )
+    shopify_legend = (
+        '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:16px;">'
+        f'<span style="width:12px;height:12px;border-radius:50%;background:{SHOPIFY_COLOR};display:inline-block;"></span>'
+        '<b>Shopify Customers</b></span>'
+    ) if "Shopify Customers" in agg["type"].values else ""
     type_legend = (
         '<span style="opacity:0.7;font-size:13px;">'
         '&nbsp; Left dot = Gifted &nbsp;|&nbsp; Right dot (neon) = Posted'
+        ' &nbsp;|&nbsp; Purple = Shopify Customers'
         ' &nbsp;|&nbsp; Bigger = more people in that area</span>'
     )
     st.markdown(
         f'<div style="padding:6px 0 10px 0;">'
-        f'{"".join(legend_parts)}{type_legend}</div>',
+        f'{"".join(legend_parts)}{shopify_legend}{type_legend}</div>',
         unsafe_allow_html=True,
     )
 
@@ -566,4 +644,36 @@ if st.session_state["agg"] is not None:
                                       "Posts": "{:.0f}"}),
             use_container_width=True,
         )
+
+        # ── Shopify Revenue by State ───────────────────────────────────────────────
+        shopify_agg = agg[
+            (agg["type"] == "Shopify Customers") & agg["client"].isin(selected_clients)
+        ]
+        if not shopify_agg.empty:
+            st.divider()
+            st.subheader("Shopify Customers by State")
+            shopify_state = (
+                shopify_agg.groupby("state")
+                .agg(customers=("count", "sum"), revenue=("revenue", "sum"))
+                .reset_index()
+                .sort_values("customers", ascending=False)
+                .reset_index(drop=True)
+            )
+            shopify_state.index += 1
+            has_revenue = shopify_state["revenue"].sum() > 0
+            if has_revenue:
+                shopify_state.columns = ["State", "Customers", "Revenue ($)"]
+                st.dataframe(
+                    shopify_state.style.format({"Customers": "{:.0f}", "Revenue ($)": "${:,.2f}"}),
+                    use_container_width=True,
+                )
+            else:
+                shopify_state = shopify_state[["state", "customers"]]
+                shopify_state.columns = ["State", "Customers"]
+                st.dataframe(
+                    shopify_state.style.format({"Customers": "{:.0f}"}),
+                    use_container_width=True,
+                )
+
+
 
