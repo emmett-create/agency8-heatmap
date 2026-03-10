@@ -774,11 +774,15 @@ if st.session_state["agg"] is not None:
         gift_events   = st.session_state.get("gift_events_df")
         shopify_events = st.session_state.get("shopify_events_df")
 
-        if gift_events is None or shopify_events is None or gift_events.empty or shopify_events.empty:
-            st.info(
-                "To use this tab, make sure your **Gift App CSV** has a date column selected "
-                "and your **Shopify CSV** has an order date column selected, then click Generate Map again."
-            )
+        missing = []
+        if gift_events is None or (gift_events is not None and gift_events.empty):
+            missing.append("**Gift App CSV** — no date rows were captured (check the Gift Date column is not '(none)')")
+        if shopify_events is None or (shopify_events is not None and shopify_events.empty):
+            missing.append("**Shopify CSV** — no date rows were captured (check the Order Date column is not '(none)')")
+
+        if missing:
+            st.warning("Gifting Impact needs date data from both CSVs. Missing:\n\n" + "\n\n".join(f"- {m}" for m in missing))
+            st.info("Select the correct date columns in each CSV's column settings expander, then click **Generate Map** again.")
         else:
             st.markdown(
                 "Shows monthly Shopify orders per state with a marker at the first gift date. "
