@@ -1,5 +1,4 @@
-"""
-Agency 8 — Influencer Heat Map (Streamlit Web App)
+ 8 — Influencer Heat Map (Streamlit Web App)
 """
 
 import colorsys
@@ -301,7 +300,7 @@ for i in range(int(n_clients)):
             gift_df_raw = pd.read_csv(gift_file, dtype=str)
             gcols = list(gift_df_raw.columns)
             with st.expander("Gift app column settings", expanded=False):
-                gc1, gc2, gc3 = st.columns(3)
+                gc1, gc2, gc3, gc4 = st.columns(4)
                 with gc1:
                     ig_default = auto_detect(gcols, ["instagram", "ig handle", "ig_handle"])
                     ig_col = st.selectbox("Instagram handle", ["(none)"] + gcols,
@@ -317,7 +316,12 @@ for i in range(int(n_clients)):
                     zip_col = st.selectbox("Zip code", gcols,
                                            index=gcols.index(zip_default) if zip_default in gcols else 0,
                                            key=f"zip_col_{i}")
-            gift_col_config = {"df": gift_df_raw, "ig": ig_col, "tt": tt_col, "zip": zip_col}
+                with gc4:
+                    date_default = auto_detect(gcols, ["date", "ship", "sent", "created", "gift date"])
+                    gift_date_col = st.selectbox("Gift date", ["(none)"] + gcols,
+                                                 index=gcols.index(date_default) + 1 if date_default in gcols else 1,
+                                                 key=f"gift_date_col_{i}")
+            gift_col_config = {"df": gift_df_raw, "ig": ig_col, "tt": tt_col, "zip": zip_col, "date": gift_date_col}
 
         if archive_file:
             archive_df_raw = pd.read_csv(archive_file, dtype=str)
@@ -334,7 +338,7 @@ for i in range(int(n_clients)):
             shopify_df_raw = pd.read_csv(shopify_file, dtype=str)
             scols = list(shopify_df_raw.columns)
             with st.expander("Shopify column settings", expanded=False):
-                sc1, sc2 = st.columns(2)
+                sc1, sc2, sc3 = st.columns(3)
                 with sc1:
                     sz_default = auto_detect(scols, ["zip", "shipping zip", "billing zip", "postal"])
                     shopify_zip_col = st.selectbox(
@@ -343,13 +347,20 @@ for i in range(int(n_clients)):
                         key=f"shopify_zip_{i}",
                     )
                 with sc2:
-                    rev_default = auto_detect(scols, ["total spent", "total", "revenue", "amount"])
+                    rev_default = auto_detect(scols, ["total spent", "subtotal", "total", "revenue", "amount"])
                     shopify_rev_col = st.selectbox(
                         "Revenue column (optional)", ["(none)"] + scols,
                         index=scols.index(rev_default) + 1 if rev_default in scols else 0,
                         key=f"shopify_rev_{i}",
                     )
-            shopify_col_config = {"df": shopify_df_raw, "zip": shopify_zip_col, "rev": shopify_rev_col}
+                with sc3:
+                    sdate_default = auto_detect(scols, ["created at", "date", "order date", "paid at"])
+                    shopify_date_col = st.selectbox(
+                        "Order date column (optional)", ["(none)"] + scols,
+                        index=scols.index(sdate_default) + 1 if sdate_default in scols else 0,
+                        key=f"shopify_date_{i}",
+                    )
+            shopify_col_config = {"df": shopify_df_raw, "zip": shopify_zip_col, "rev": shopify_rev_col, "date": shopify_date_col}
 
         if client_name and (gift_col_config or shopify_col_config):
             client_configs.append({
@@ -369,6 +380,7 @@ if st.button("Generate Map", type="primary", use_container_width=True):
 
     with st.spinner("Processing data and geocoding zip codes..."):
         all_gifted, all_posted, all_shopify, total_unmatched = [], [], [], 0
+        gift_events_list, shopify_events_list = [], []
 
         for cfg in client_configs:
             client      = cfg["client"]
@@ -385,11 +397,14 @@ if st.button("Generate Map", type="primary", use_container_width=True):
                     tt  = normalize_handle(row[gift_cfg["tt"]]) if gift_cfg["tt"] != "(none)" else ""
                     raw = str(row.get(gift_cfg["zip"], "")).strip()
                     zip_code = raw.zfill(5)[:5] if raw and raw.lower() != "nan" else ""
+                    date_str = str(row.get(gift_cfg["date"], "")).strip() if gift_cfg.get("date") and gift_cfg["date"] != "(none)" else ""
                     if zip_code and (ig or tt):
                         gift_rows.append({"ig_handle": ig, "tt_handle": tt, "zip_code": zip_code})
                         for h in [ig, tt]:
                             if h:
                                 handle_to_zip[h] = zip_code
+                        if date_str and date_str.lower() != "nan":
+                            gift_events_list.append({"client": client, "zip_code": zip_code, "gift_date": date_str})
 
                 for r in gift_rows:
                     all_gifted.append({
@@ -436,6 +451,9 @@ if st.button("Generate Map", type="primary", use_container_width=True):
                         "client": client, "zip_code": zip_code,
                         "type": "Shopify Customers", "posts_total": "", "revenue": rev,
                     })
+                    order_date_str = str(row.get(shopify_cfg["date"], "")).strip() if shopify_cfg.get("date") and shopify_cfg["date"] != "(none)" else ""
+                    if order_date_str and order_date_str.lower() != "nan":
+                        shopify_events_list.append({"client": client, "zip_code": zip_code, "order_date": order_date_str, "revenue": rev})
 
         all_records = pd.DataFrame(all_gifted + all_posted + all_shopify)
         if all_records.empty:
@@ -460,6 +478,24 @@ if st.button("Generate Map", type="primary", use_container_width=True):
         agg["place"] = agg["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("place", "Unknown"))
         agg["state"] = agg["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("state", "Unknown"))
         agg = agg.dropna(subset=["lat", "lon"])
+
+        # Build gift events dataframe (with dates + geocoded state)
+        if gift_events_list:
+            gev = pd.DataFrame(gift_events_list)
+            gev["state"] = gev["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("state"))
+            gev["gift_date"] = pd.to_datetime(gev["gift_date"], errors="coerce")
+            st.session_state["gift_events_df"] = gev.dropna(subset=["gift_date", "state"])
+        else:
+            st.session_state["gift_events_df"] = None
+
+        # Build shopify events dataframe (with dates + geocoded state)
+        if shopify_events_list:
+            sev = pd.DataFrame(shopify_events_list)
+            sev["state"] = sev["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("state"))
+            sev["order_date"] = pd.to_datetime(sev["order_date"], errors="coerce")
+            st.session_state["shopify_events_df"] = sev.dropna(subset=["order_date", "state"])
+        else:
+            st.session_state["shopify_events_df"] = None
 
         st.session_state["agg"]             = agg
         st.session_state["total_gifted"]    = len(all_gifted)
@@ -539,8 +575,8 @@ if st.session_state["agg"] is not None:
     )
 
     # ── Tabs ──────────────────────────────────────────────────────────────────────
-    tab_vol, tab_conv, tab_stats = st.tabs([
-        "Volume Map", "Conversion Rate Map", "Stats & Leaderboards"
+    tab_vol, tab_conv, tab_stats, tab_impact = st.tabs([
+        "Volume Map", "Conversion Rate Map", "Stats & Leaderboards", "Gifting Impact"
     ])
 
     zip_stats   = build_zip_stats(agg)
@@ -675,5 +711,169 @@ if st.session_state["agg"] is not None:
                     use_container_width=True,
                 )
 
+            st.divider()
 
+            # ── Opportunity Zones ──────────────────────────────────────────────────
+            st.subheader("Opportunity Zones")
+            st.caption("States with the most Shopify customers relative to gifting — where you should be doing more outreach.")
+            gifted_agg = agg[(agg["type"] == "Gifted") & agg["client"].isin(selected_clients)]
+            gifted_by_state = gifted_agg.groupby("state")["count"].sum().reset_index(name="gifted")
+            shopify_by_state = shopify_agg.groupby("state")["count"].sum().reset_index(name="shopify_customers")
+            gap = shopify_by_state.merge(gifted_by_state, on="state", how="left").fillna(0)
+            gap["customers_per_gift"] = (
+                gap["shopify_customers"] / gap["gifted"].replace(0, float("nan"))
+            ).round(1)
+            gap = gap.sort_values("customers_per_gift", ascending=False).reset_index(drop=True)
+            gap.index += 1
+            gap.columns = ["State", "Shopify Customers", "Gifted", "Customers per Gift"]
+            st.dataframe(
+                gap.style.format({
+                    "Shopify Customers": "{:.0f}",
+                    "Gifted": "{:.0f}",
+                    "Customers per Gift": "{:.1f}",
+                }),
+                use_container_width=True,
+            )
+
+            st.divider()
+
+            # ── Gifted vs Shopify Customers bar chart ─────────────────────────────
+            st.subheader("Gifted vs Shopify Customers by State")
+            st.caption("Side-by-side comparison — shows where gifting activity aligns with (or lags behind) your customer base.")
+            chart_data = gap.copy().head(25).sort_values("Shopify Customers", ascending=False)
+            fig_bar = go.Figure(data=[
+                go.Bar(
+                    name="Gifted",
+                    x=chart_data["State"].tolist(),
+                    y=chart_data["Gifted"].tolist(),
+                    marker_color="#4a90d9",
+                ),
+                go.Bar(
+                    name="Shopify Customers",
+                    x=chart_data["State"].tolist(),
+                    y=chart_data["Shopify Customers"].tolist(),
+                    marker_color=SHOPIFY_COLOR,
+                ),
+            ])
+            fig_bar.update_layout(
+                barmode="group",
+                height=420,
+                margin=dict(t=10, b=0, l=0, r=0),
+                legend=dict(bgcolor="rgba(255,255,255,0.85)", font=dict(color="#222", size=12)),
+                xaxis_title="State",
+                yaxis_title="Count",
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+    # ── Tab 4: Gifting Impact ──────────────────────────────────────────────────────
+    with tab_impact:
+        gift_events   = st.session_state.get("gift_events_df")
+        shopify_events = st.session_state.get("shopify_events_df")
+
+        if gift_events is None or shopify_events is None or gift_events.empty or shopify_events.empty:
+            st.info(
+                "To use this tab, make sure your **Gift App CSV** has a date column selected "
+                "and your **Shopify CSV** has an order date column selected, then click Generate Map again."
+            )
+        else:
+            st.markdown(
+                "Shows how Shopify sales in each state changed after your first gift was sent there. "
+                "Helps identify whether gifting is moving the needle on real customer sales."
+            )
+
+            window = st.selectbox("Days before/after first gift to compare", [30, 60, 90], index=1, key="impact_window")
+
+            # Filter to selected clients
+            gev = gift_events[gift_events["client"].isin(selected_clients)].copy()
+            sev = shopify_events[shopify_events["client"].isin(selected_clients)].copy()
+
+            # First gift date per (client, state)
+            first_gift = (
+                gev.groupby(["client", "state"])["gift_date"]
+                .min()
+                .reset_index()
+                .rename(columns={"gift_date": "first_gift_date"})
+            )
+
+            # Join shopify orders to first gift dates
+            merged = sev.merge(first_gift, on=["client", "state"], how="inner")
+            merged["days_from_gift"] = (merged["order_date"] - merged["first_gift_date"]).dt.days
+
+            before = merged[merged["days_from_gift"].between(-window, -1)]
+            after  = merged[merged["days_from_gift"].between(0, window - 1)]
+
+            before_stats = before.groupby(["client", "state"]).agg(
+                orders_before=("revenue", "count"),
+                revenue_before=("revenue", "sum"),
+            ).reset_index()
+
+            after_stats = after.groupby(["client", "state"]).agg(
+                orders_after=("revenue", "count"),
+                revenue_after=("revenue", "sum"),
+            ).reset_index()
+
+            impact = first_gift.merge(before_stats, on=["client", "state"], how="left")
+            impact = impact.merge(after_stats, on=["client", "state"], how="left").fillna(0)
+            impact["revenue_change_pct"] = (
+                (impact["revenue_after"] - impact["revenue_before"])
+                / impact["revenue_before"].replace(0, float("nan")) * 100
+            ).round(1)
+            impact = impact.sort_values("revenue_after", ascending=False).reset_index(drop=True)
+            impact["first_gift_date"] = impact["first_gift_date"].dt.strftime("%Y-%m-%d")
+            impact.index += 1
+
+            if impact.empty:
+                st.warning("Not enough overlapping data between gift dates and Shopify order dates to build this view.")
+            else:
+                # Summary bar chart: revenue before vs after by state
+                top = impact.head(20)
+                fig_impact = go.Figure(data=[
+                    go.Bar(
+                        name=f"Revenue {window}d Before Gifting",
+                        x=top["state"].tolist(),
+                        y=top["revenue_before"].tolist(),
+                        marker_color="#aaaaaa",
+                    ),
+                    go.Bar(
+                        name=f"Revenue {window}d After Gifting",
+                        x=top["state"].tolist(),
+                        y=top["revenue_after"].tolist(),
+                        marker_color=SHOPIFY_COLOR,
+                    ),
+                ])
+                fig_impact.update_layout(
+                    barmode="group",
+                    height=400,
+                    margin=dict(t=10, b=0, l=0, r=0),
+                    legend=dict(bgcolor="rgba(255,255,255,0.85)", font=dict(color="#222", size=12)),
+                    xaxis_title="State",
+                    yaxis_title="Revenue ($)",
+                )
+                st.plotly_chart(fig_impact, use_container_width=True)
+
+                st.subheader("Before vs After Gifting by State")
+                display = impact[["client", "state", "first_gift_date",
+                                   "orders_before", "revenue_before",
+                                   "orders_after", "revenue_after",
+                                   "revenue_change_pct"]].copy()
+                display.columns = [
+                    "Client", "State", "First Gift Date",
+                    f"Orders ({window}d Before)", f"Revenue ({window}d Before)",
+                    f"Orders ({window}d After)", f"Revenue ({window}d After)",
+                    "Revenue Change %",
+                ]
+                st.dataframe(
+                    display.style.format({
+                        f"Orders ({window}d Before)": "{:.0f}",
+                        f"Revenue ({window}d Before)": "${:,.2f}",
+                        f"Orders ({window}d After)": "{:.0f}",
+                        f"Revenue ({window}d After)": "${:,.2f}",
+                        "Revenue Change %": "{:+.1f}%",
+                    }),
+                    use_container_width=True,
+                )
+                st.caption(
+                    f"⚠️ Correlation, not causation — revenue changes in the {window} days after gifting "
+                    "may reflect seasonality, ads, or other factors. Use as a directional signal."
+                )
 
