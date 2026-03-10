@@ -501,11 +501,13 @@ if st.button("Generate Map", type="primary", use_container_width=True):
         else:
             st.session_state["shopify_events_df"] = None
 
-        st.session_state["agg"]             = agg
-        st.session_state["total_gifted"]    = len(all_gifted)
-        st.session_state["total_posted"]    = len(all_posted)
-        st.session_state["total_shopify"]   = len(all_shopify)
-        st.session_state["total_unmatched"] = total_unmatched
+        st.session_state["agg"]                      = agg
+        st.session_state["total_gifted"]             = len(all_gifted)
+        st.session_state["total_posted"]             = len(all_posted)
+        st.session_state["total_shopify"]            = len(all_shopify)
+        st.session_state["total_unmatched"]          = total_unmatched
+        st.session_state["debug_gift_events_raw"]    = len(gift_events_list)
+        st.session_state["debug_shopify_events_raw"] = len(shopify_events_list)
 
 # ── Display ───────────────────────────────────────────────────────────────────────
 
@@ -783,6 +785,9 @@ if st.session_state["agg"] is not None:
         if missing:
             st.warning("Gifting Impact needs date data from both CSVs. Missing:\n\n" + "\n\n".join(f"- {m}" for m in missing))
             st.info("Select the correct date columns in each CSV's column settings expander, then click **Generate Map** again.")
+            raw_gift    = st.session_state.get("debug_gift_events_raw", "n/a")
+            raw_shopify = st.session_state.get("debug_shopify_events_raw", "n/a")
+            st.caption(f"Debug: raw gift date rows captured = {raw_gift} | raw Shopify date rows captured = {raw_shopify}")
         else:
             st.markdown(
                 "Shows monthly Shopify orders per state with a marker at the first gift date. "
