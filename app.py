@@ -788,6 +788,10 @@ if st.session_state["agg"] is not None:
             gev = gift_events[gift_events["client"].isin(selected_clients)].copy()
             sev = shopify_events[shopify_events["client"].isin(selected_clients)].copy()
 
+            # Strip timezone info so date subtraction works regardless of Shopify's format
+            gev["gift_date"]      = gev["gift_date"].dt.tz_localize(None) if gev["gift_date"].dt.tz is not None else gev["gift_date"]
+            sev["order_date"]     = sev["order_date"].dt.tz_localize(None) if sev["order_date"].dt.tz is not None else sev["order_date"]
+
             # First gift date per (client, state)
             first_gift = (
                 gev.groupby(["client", "state"])["gift_date"]
