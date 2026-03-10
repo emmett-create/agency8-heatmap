@@ -488,6 +488,10 @@ if st.button("Generate Map", type="primary", use_container_width=True):
             gev = pd.DataFrame(gift_events_list)
             gev["state"] = gev["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("state"))
             gev["gift_date"] = pd.to_datetime(gev["gift_date"], errors="coerce")
+            st.session_state["debug_gift_valid_dates"]  = int(gev["gift_date"].notna().sum())
+            st.session_state["debug_gift_valid_states"] = int(gev["state"].notna().sum())
+            st.session_state["debug_gift_sample_date"]  = str(gev["gift_date"].dropna().iloc[0]) if gev["gift_date"].notna().any() else "all NaT"
+            st.session_state["debug_gift_sample_raw"]   = str(gift_events_list[0].get("gift_date", "?"))
             st.session_state["gift_events_df"] = gev.dropna(subset=["gift_date", "state"])
         else:
             st.session_state["gift_events_df"] = None
@@ -787,7 +791,11 @@ if st.session_state["agg"] is not None:
             st.info("Select the correct date columns in each CSV's column settings expander, then click **Generate Map** again.")
             raw_gift    = st.session_state.get("debug_gift_events_raw", "n/a")
             raw_shopify = st.session_state.get("debug_shopify_events_raw", "n/a")
-            st.caption(f"Debug: raw gift date rows captured = {raw_gift} | raw Shopify date rows captured = {raw_shopify}")
+            valid_dates  = st.session_state.get("debug_gift_valid_dates", "n/a")
+            valid_states = st.session_state.get("debug_gift_valid_states", "n/a")
+            sample_raw   = st.session_state.get("debug_gift_sample_raw", "n/a")
+            sample_parsed = st.session_state.get("debug_gift_sample_date", "n/a")
+            st.caption(f"Debug: raw gift rows={raw_gift} | valid dates={valid_dates} | valid states={valid_states} | sample raw='{sample_raw}' → parsed='{sample_parsed}' | raw shopify rows={raw_shopify}")
         else:
             st.markdown(
                 "Shows monthly Shopify orders per state with a marker at the first gift date. "
