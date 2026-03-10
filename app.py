@@ -778,11 +778,9 @@ if st.session_state["agg"] is not None:
             )
         else:
             st.markdown(
-                "Shows how Shopify sales in each state changed after your first gift was sent there. "
-                "Helps identify whether gifting is moving the needle on real customer sales."
+                "Shows monthly Shopify orders per state with a marker at the first gift date. "
+                "Look for an uptick after the gifting line — that's your signal."
             )
-
-            window = st.selectbox("Days before/after first gift to compare", [30, 60, 90], index=1, key="impact_window")
 
             # Filter to selected clients
             gev = gift_events[gift_events["client"].isin(selected_clients)].copy()
@@ -796,85 +794,85 @@ if st.session_state["agg"] is not None:
                 .rename(columns={"gift_date": "first_gift_date"})
             )
 
-            # Join shopify orders to first gift dates
-            merged = sev.merge(first_gift, on=["client", "state"], how="inner")
-            merged["days_from_gift"] = (merged["order_date"] - merged["first_gift_date"]).dt.days
+            # State picker — only states where we have both gifting and Shopify orders
+            gifted_states  = set(first_gift["state"].unique())
+            shopify_states = set(sev["state"].dropna().unique())
+            overlap_states = sorted(gifted_states & shopify_states)
 
-            before = merged[merged["days_from_gift"].between(-window, -1)]
-            after  = merged[merged["days_from_gift"].between(0, window - 1)]
-
-            before_stats = before.groupby(["client", "state"]).agg(
-                orders_before=("revenue", "count"),
-                revenue_before=("revenue", "sum"),
-            ).reset_index()
-
-            after_stats = after.groupby(["client", "state"]).agg(
-                orders_after=("revenue", "count"),
-                revenue_after=("revenue", "sum"),
-            ).reset_index()
-
-            impact = first_gift.merge(before_stats, on=["client", "state"], how="left")
-            impact = impact.merge(after_stats, on=["client", "state"], how="left").fillna(0)
-            impact["revenue_change_pct"] = (
-                (impact["revenue_after"] - impact["revenue_before"])
-                / impact["revenue_before"].replace(0, float("nan")) * 100
-            ).round(1)
-            impact = impact.sort_values("revenue_after", ascending=False).reset_index(drop=True)
-            impact["first_gift_date"] = impact["first_gift_date"].dt.strftime("%Y-%m-%d")
-            impact.index += 1
-
-            if impact.empty:
-                st.warning("Not enough overlapping data between gift dates and Shopify order dates to build this view.")
-            else:
-                # Summary bar chart: revenue before vs after by state
-                top = impact.head(20)
-                fig_impact = go.Figure(data=[
-                    go.Bar(
-                        name=f"Revenue {window}d Before Gifting",
-                        x=top["state"].tolist(),
-                        y=top["revenue_before"].tolist(),
-                        marker_color="#aaaaaa",
-                    ),
-                    go.Bar(
-                        name=f"Revenue {window}d After Gifting",
-                        x=top["state"].tolist(),
-                        y=top["revenue_after"].tolist(),
-                        marker_color=SHOPIFY_COLOR,
-                    ),
-                ])
-                fig_impact.update_layout(
-                    barmode="group",
-                    height=400,
-                    margin=dict(t=10, b=0, l=0, r=0),
-                    legend=dict(bgcolor="rgba(255,255,255,0.85)", font=dict(color="#222", size=12)),
-                    xaxis_title="State",
-                    yaxis_title="Revenue ($)",
+            if not overlap_states:
+                st.warning(
+                    "No states found in both your gifting data and Shopify orders. "
+                    "Check that the zip code and date columns are selected correctly."
                 )
-                st.plotly_chart(fig_impact, use_container_width=True)
+            else:
+                selected_state = st.selectbox("Select a state to view", overlap_states, key="impact_state")
 
-                st.subheader("Before vs After Gifting by State")
-                display = impact[["client", "state", "first_gift_date",
-                                   "orders_before", "revenue_before",
-                                   "orders_after", "revenue_after",
-                                   "revenue_change_pct"]].copy()
-                display.columns = [
-                    "Client", "State", "First Gift Date",
-                    f"Orders ({window}d Before)", f"Revenue ({window}d Before)",
-                    f"Orders ({window}d After)", f"Revenue ({window}d After)",
-                    "Revenue Change %",
-                ]
+                state_orders = sev[sev["state"] == selected_state].copy()
+                state_orders["month"] = state_orders["order_date"].dt.to_period("M").dt.to_timestamp()
+                monthly = (
+                    state_orders.groupby("month")
+                    .size()
+                    .reset_index(name="orders")
+                )
+
+                first_gift_date = first_gift[first_gift["state"] == selected_state]["first_gift_date"].min()
+
+                fig_trend = go.Figure()
+                fig_trend.add_trace(go.Bar(
+                    x=monthly["month"].tolist(),
+                    y=monthly["orders"].tolist(),
+                    name="Monthly Orders",
+                    marker_color=SHOPIFY_COLOR,
+                ))
+                fig_trend.add_vline(
+                    x=first_gift_date.timestamp() * 1000,
+                    line_dash="dash",
+                    line_color="#ffffff",
+                    line_width=2,
+                    annotation_text=f"  First gift: {first_gift_date.strftime('%b %Y')}",
+                    annotation_font_color="#ffffff",
+                    annotation_position="top right",
+                )
+                fig_trend.update_layout(
+                    height=420,
+                    margin=dict(t=30, b=0, l=0, r=0),
+                    xaxis_title="Month",
+                    yaxis_title="Orders",
+                    legend=dict(bgcolor="rgba(255,255,255,0.85)", font=dict(color="#222", size=12)),
+                )
+                st.plotly_chart(fig_trend, use_container_width=True)
+
+                # Summary table: all states, orders before vs after first gift
+                merged = sev.merge(first_gift, on=["client", "state"], how="inner")
+                merged["days_from_gift"] = (merged["order_date"] - merged["first_gift_date"]).dt.days
+                before_all = merged[merged["days_from_gift"] < 0]
+                after_all  = merged[merged["days_from_gift"] >= 0]
+
+                before_stats = before_all.groupby(["client", "state"]).size().reset_index(name="orders_before")
+                after_stats  = after_all.groupby(["client", "state"]).size().reset_index(name="orders_after")
+
+                impact = first_gift.merge(before_stats, on=["client", "state"], how="left")
+                impact = impact.merge(after_stats, on=["client", "state"], how="left").fillna(0)
+                impact["change"] = (
+                    (impact["orders_after"] - impact["orders_before"])
+                    / impact["orders_before"].replace(0, float("nan")) * 100
+                ).round(1)
+                impact = impact.sort_values("orders_after", ascending=False).reset_index(drop=True)
+                impact["first_gift_date"] = impact["first_gift_date"].dt.strftime("%Y-%m-%d")
+                impact.index += 1
+
+                st.subheader("All States — Orders Before vs After First Gift")
+                display = impact[["client", "state", "first_gift_date", "orders_before", "orders_after", "change"]].copy()
+                display.columns = ["Client", "State", "First Gift Date", "Orders Before Gifting", "Orders After Gifting", "Change %"]
                 st.dataframe(
                     display.style.format({
-                        f"Orders ({window}d Before)": "{:.0f}",
-                        f"Revenue ({window}d Before)": "${:,.2f}",
-                        f"Orders ({window}d After)": "{:.0f}",
-                        f"Revenue ({window}d After)": "${:,.2f}",
-                        "Revenue Change %": "{:+.1f}%",
+                        "Orders Before Gifting": "{:.0f}",
+                        "Orders After Gifting": "{:.0f}",
+                        "Change %": "{:+.1f}%",
                     }),
                     use_container_width=True,
                 )
                 st.caption(
-                    f"⚠️ Correlation, not causation — revenue changes in the {window} days after gifting "
-                    "may reflect seasonality, ads, or other factors. Use as a directional signal."
+                    "⚠️ Correlation, not causation — order changes after gifting may reflect "
+                    "seasonality, ads, or other factors. Use as a directional signal."
                 )
-
