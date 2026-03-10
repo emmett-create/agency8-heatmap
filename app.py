@@ -487,7 +487,7 @@ if st.button("Generate Map", type="primary", use_container_width=True):
         if gift_events_list:
             gev = pd.DataFrame(gift_events_list)
             gev["state"] = gev["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("state"))
-            gev["gift_date"] = pd.to_datetime(gev["gift_date"], errors="coerce", utc=True).dt.tz_convert(None)
+            gev["gift_date"] = pd.to_datetime(gev["gift_date"], errors="coerce")
             st.session_state["gift_events_df"] = gev.dropna(subset=["gift_date", "state"])
         else:
             st.session_state["gift_events_df"] = None
