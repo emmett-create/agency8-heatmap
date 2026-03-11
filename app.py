@@ -66,6 +66,33 @@ def normalize_handle(h):
     return h.strip().lstrip("@").lower()
 
 
+_STATE_ABBREV = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California",
+    "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware", "FL": "Florida", "GA": "Georgia",
+    "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa",
+    "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
+    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada", "NH": "New Hampshire",
+    "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York", "NC": "North Carolina",
+    "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania",
+    "RI": "Rhode Island", "SC": "South Carolina", "SD": "South Dakota", "TN": "Tennessee",
+    "TX": "Texas", "UT": "Utah", "VT": "Vermont", "VA": "Virginia", "WA": "Washington",
+    "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming", "DC": "District of Columbia",
+}
+
+def normalize_state(s):
+    if not s or not isinstance(s, str):
+        return None
+    s = s.strip()
+    if not s or s.lower() in ("nan", "n/a", ""):
+        return None
+    upper = s.upper()
+    if upper in _STATE_ABBREV:
+        return _STATE_ABBREV[upper]
+    # Title-case it so "california" → "California"
+    return s.title()
+
+
 def auto_detect(cols, hints):
     for col in cols:
         if any(h.lower() in col.lower() for h in hints):
@@ -301,9 +328,9 @@ for i in range(int(n_clients)):
             gift_df_raw = pd.read_csv(gift_file, dtype=str)
             gcols = list(gift_df_raw.columns)
             with st.expander("Gift app column settings", expanded=False):
-                gc1, gc2, gc3, gc4 = st.columns(4)
+                gc1, gc2, gc3, gc4, gc5 = st.columns(5)
                 with gc1:
-                    ig_default = auto_detect(gcols, ["instagram", "ig handle", "ig_handle"])
+                    ig_default = auto_detect(gcols, ["instagram", "ig handle", "ig_handle", "handle"])
                     ig_col = st.selectbox("Instagram handle", ["(none)"] + gcols,
                                           index=gcols.index(ig_default) + 1 if ig_default in gcols else 0,
                                           key=f"ig_col_{i}")
@@ -322,7 +349,19 @@ for i in range(int(n_clients)):
                     gift_date_col = st.selectbox("Gift date", ["(none)"] + gcols,
                                                  index=gcols.index(date_default) + 1 if date_default in gcols else 1,
                                                  key=f"gift_date_col_{i}")
-            gift_col_config = {"df": gift_df_raw, "ig": ig_col, "tt": tt_col, "zip": zip_col, "date": gift_date_col}
+                with gc5:
+                    state_default = auto_detect(gcols, ["state", "province", "region"])
+                    gift_state_col = st.selectbox("State column (optional)", ["(none)"] + gcols,
+                                                  index=gcols.index(state_default) + 1 if state_default in gcols else 0,
+                                                  key=f"gift_state_col_{i}")
+            gift_year = None
+            if gift_date_col != "(none)":
+                gift_year = st.number_input(
+                    "What year were these gifts sent? (needed when the date column only shows month/day, e.g. '2/16')",
+                    min_value=2018, max_value=2030, value=2024, step=1,
+                    key=f"gift_year_{i}",
+                )
+            gift_col_config = {"df": gift_df_raw, "ig": ig_col, "tt": tt_col, "zip": zip_col, "date": gift_date_col, "year": gift_year, "state_col": gift_state_col}
 
         if archive_file:
             archive_df_raw = pd.read_csv(archive_file, dtype=str)
@@ -402,16 +441,19 @@ if st.button("Generate Map", type="primary", use_container_width=True):
                     raw = str(row.get(gift_cfg["zip"], "")).strip()
                     zip_code = raw.zfill(5)[:5] if raw and raw.lower() != "nan" else ""
                     date_str = str(row.get(gift_cfg["date"], "")).strip() if gift_cfg.get("date") and gift_cfg["date"] != "(none)" else ""
-                    # If date looks like M/D or MM/DD (no year), append the current year
-                    if date_str and date_str.count("/") == 1:
-                        date_str = f"{date_str}/{pd.Timestamp.now().year}"
+                    # If date looks like M/D or MM/DD (no year), append the campaign year
+                    if date_str and date_str.count("/") == 1 and gift_cfg.get("year"):
+                        date_str = f"{date_str}/{int(gift_cfg['year'])}"
                     if zip_code and (ig or tt):
                         gift_rows.append({"ig_handle": ig, "tt_handle": tt, "zip_code": zip_code})
                         for h in [ig, tt]:
                             if h:
                                 handle_to_zip[h] = zip_code
                         if date_str and date_str.lower() != "nan":
-                            gift_events_list.append({"client": client, "zip_code": zip_code, "gift_date": date_str})
+                            state_direct = ""
+                            if gift_cfg.get("state_col") and gift_cfg["state_col"] != "(none)":
+                                state_direct = str(row.get(gift_cfg["state_col"], "")).strip()
+                            gift_events_list.append({"client": client, "zip_code": zip_code, "gift_date": date_str, "state_direct": state_direct})
 
                 for r in gift_rows:
                     all_gifted.append({
@@ -489,7 +531,15 @@ if st.button("Generate Map", type="primary", use_container_width=True):
         # Build gift events dataframe (with dates + geocoded state)
         if gift_events_list:
             gev = pd.DataFrame(gift_events_list)
-            gev["state"] = gev["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("state"))
+            # Use direct state column if provided, otherwise infer from zip code
+            if "state_direct" in gev.columns and gev["state_direct"].str.strip().ne("").any():
+                gev["state"] = gev["state_direct"].map(normalize_state)
+                # Fall back to zip geocoding for any rows with blank state
+                mask = gev["state"].isna()
+                if mask.any():
+                    gev.loc[mask, "state"] = gev.loc[mask, "zip_code"].map(lambda z: zip_lookup.get(z, {}).get("state"))
+            else:
+                gev["state"] = gev["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("state"))
             gev["gift_date"] = pd.to_datetime(gev["gift_date"], errors="coerce")
             st.session_state["gift_events_df"] = gev.dropna(subset=["gift_date", "state"])
         else:
