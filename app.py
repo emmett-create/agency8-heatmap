@@ -100,6 +100,34 @@ def auto_detect(cols, hints):
     return cols[0]
 
 
+_GIFT_DATE_FMTS = [
+    "%m/%d/%Y %H:%M:%S",  # 2/16/2024 0:00:00
+    "%m/%d/%Y %H:%M",     # 2/16/2024 0:00
+    "%m/%d/%Y",           # 2/16/2024
+    "%Y-%m-%d %H:%M:%S",  # 2025-10-06 18:31:06
+    "%Y-%m-%d %H:%M",     # 2025-10-06 18:31
+    "%Y-%m-%d",           # 2025-10-06
+    "%m/%d/%y",           # 3/1/26
+    "%m/%d/%y %H:%M:%S",  # 3/1/26 0:00:00
+]
+
+def parse_gift_dates(series):
+    """Parse a Series of mixed-format date strings robustly."""
+    result = pd.Series([pd.NaT] * len(series), index=series.index)
+    remaining = series.copy()
+    for fmt in _GIFT_DATE_FMTS:
+        mask = result.isna() & remaining.notna()
+        if not mask.any():
+            break
+        parsed = pd.to_datetime(remaining[mask], format=fmt, errors="coerce")
+        result[mask] = parsed
+    # Final fallback for anything still unparsed
+    still_na = result.isna() & remaining.notna()
+    if still_na.any():
+        result[still_na] = pd.to_datetime(remaining[still_na], errors="coerce", format="mixed")
+    return result
+
+
 @st.cache_resource(show_spinner="Loading zip code database...")
 def get_geocoder():
     return pgeocode.Nominatim("us")
@@ -540,7 +568,7 @@ if st.button("Generate Map", type="primary", use_container_width=True):
                     gev.loc[mask, "state"] = gev.loc[mask, "zip_code"].map(lambda z: zip_lookup.get(z, {}).get("state"))
             else:
                 gev["state"] = gev["zip_code"].map(lambda z: zip_lookup.get(z, {}).get("state"))
-            gev["gift_date"] = pd.to_datetime(gev["gift_date"], errors="coerce")
+            gev["gift_date"] = parse_gift_dates(gev["gift_date"])
             st.session_state["gift_events_df"] = gev.dropna(subset=["gift_date", "state"])
         else:
             st.session_state["gift_events_df"] = None
