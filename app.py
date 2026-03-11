@@ -406,7 +406,7 @@ for i in range(int(n_clients)):
             shopify_df_raw = pd.read_csv(shopify_file, dtype=str)
             scols = list(shopify_df_raw.columns)
             with st.expander("Shopify column settings", expanded=False):
-                sc1, sc2, sc3 = st.columns(3)
+                sc1, sc2, sc3, sc4 = st.columns(4)
                 with sc1:
                     sz_default = auto_detect(scols, ["zip", "shipping zip", "billing zip", "postal"])
                     shopify_zip_col = st.selectbox(
@@ -431,7 +431,19 @@ for i in range(int(n_clients)):
                         index=scols.index(sdate_default) + 1 if sdate_default in scols else 0,
                         key=f"shopify_date_{i}",
                     )
-            shopify_col_config = {"df": shopify_df_raw, "zip": shopify_zip_col, "rev": shopify_rev_col, "date": shopify_date_col}
+                with sc4:
+                    stag_default = auto_detect(scols, ["tags", "tag"])
+                    shopify_tag_col = st.selectbox(
+                        "Tags column (optional)", ["(none)"] + scols,
+                        index=scols.index(stag_default) + 1 if stag_default in scols else 0,
+                        key=f"shopify_tag_col_{i}",
+                    )
+                shopify_exclude_tags = st.text_input(
+                    "Exclude orders with these tags (comma-separated, e.g. A8, gifted)",
+                    value="A8",
+                    key=f"shopify_exclude_tags_{i}",
+                )
+            shopify_col_config = {"df": shopify_df_raw, "zip": shopify_zip_col, "rev": shopify_rev_col, "date": shopify_date_col, "tag_col": shopify_tag_col, "exclude_tags": shopify_exclude_tags}
 
         if client_name and (gift_col_config or shopify_col_config):
             client_configs.append({
@@ -511,7 +523,16 @@ if st.button("Generate Map", type="primary", use_container_width=True):
                         total_unmatched += 1
 
             if shopify_cfg:
+                # Build set of tags to exclude (e.g. {"a8", "gifted"})
+                exclude_tags = set()
+                if shopify_cfg.get("exclude_tags"):
+                    exclude_tags = {t.strip().lower() for t in shopify_cfg["exclude_tags"].split(",") if t.strip()}
                 for idx, row in shopify_cfg["df"].iterrows():
+                    # Skip gifted/agency orders based on tag filter
+                    if exclude_tags and shopify_cfg.get("tag_col") and shopify_cfg["tag_col"] != "(none)":
+                        row_tags = str(row.get(shopify_cfg["tag_col"], "")).lower()
+                        if any(t in row_tags for t in exclude_tags):
+                            continue
                     raw = str(row.get(shopify_cfg["zip"], "")).strip()
                     zip_code = raw.zfill(5)[:5] if raw and raw.lower() not in ("nan", "") else ""
                     if not zip_code:
