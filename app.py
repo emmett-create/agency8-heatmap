@@ -559,6 +559,18 @@ if st.button("Generate Map", type="primary", use_container_width=True):
         st.session_state["total_posted"]             = len(all_posted)
         st.session_state["total_shopify"]            = len(all_shopify)
         st.session_state["total_unmatched"]          = total_unmatched
+        st.session_state["debug_gift_raw_count"]     = len(gift_events_list)
+        if gift_events_list:
+            sample = gift_events_list[0]
+            st.session_state["debug_gift_sample"] = f"zip={sample.get('zip_code')} | date='{sample.get('gift_date')}' | state_direct='{sample.get('state_direct')}'"
+            if len(gift_events_list) > 2:
+                s2 = gift_events_list[2]
+                st.session_state["debug_gift_sample3"] = f"zip={s2.get('zip_code')} | date='{s2.get('gift_date')}' | state_direct='{s2.get('state_direct')}'"
+            else:
+                st.session_state["debug_gift_sample3"] = "only 2 rows"
+        else:
+            st.session_state["debug_gift_sample"] = "empty"
+            st.session_state["debug_gift_sample3"] = "empty"
 
 # ── Display ───────────────────────────────────────────────────────────────────────
 
@@ -843,6 +855,12 @@ if st.session_state["agg"] is not None:
             )
 
             with st.expander("🔍 Data check — verify what's loaded", expanded=True):
+                raw_count = st.session_state.get("debug_gift_raw_count", "n/a")
+                sample1   = st.session_state.get("debug_gift_sample", "n/a")
+                sample3   = st.session_state.get("debug_gift_sample3", "n/a")
+                st.caption(f"Raw gift rows with a date (before state mapping): **{raw_count}**")
+                st.caption(f"Row 1 sample: {sample1}")
+                st.caption(f"Row 3 sample: {sample3}")
                 st.write(f"**Shopify events loaded:** {len(shopify_events)} rows")
                 st.write(f"**Gift events loaded:** {len(gift_events)} rows")
                 if not shopify_events.empty:
