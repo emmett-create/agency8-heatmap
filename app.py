@@ -11,6 +11,62 @@ import plotly.express as px
 
 st.set_page_config(page_title="Agency 8 — Heat Map", layout="wide")
 
+st.markdown("""
+<style>
+/* Hide Streamlit default footer and menu */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+
+/* Cleaner tab styling */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+    border-bottom: 1px solid #333;
+}
+.stTabs [data-baseweb="tab"] {
+    padding: 8px 20px;
+    border-radius: 6px 6px 0 0;
+    font-weight: 500;
+    color: #aaa;
+}
+.stTabs [aria-selected="true"] {
+    background-color: #1a1a2e;
+    color: #fff;
+    border-bottom: 2px solid #e84393;
+}
+
+/* Metric cards */
+[data-testid="metric-container"] {
+    background-color: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 10px;
+    padding: 16px;
+}
+
+/* Cleaner expander */
+[data-testid="stExpander"] {
+    border: 1px solid #1f2937;
+    border-radius: 8px;
+    margin-bottom: 8px;
+}
+
+/* Buttons */
+[data-testid="stButton"] button {
+    border-radius: 8px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+
+/* Dataframe */
+[data-testid="stDataFrame"] {
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+/* Section headers */
+h2, h3 { color: #f0f0f0; }
+</style>
+""", unsafe_allow_html=True)
+
 # ── Color config ──────────────────────────────────────────────────────────────────
 
 # Heat map gradients (dark → bright = low → high density)
@@ -320,7 +376,12 @@ if "agg" not in st.session_state:
 
 # ── App UI ────────────────────────────────────────────────────────────────────────
 
-st.title("Agency 8 — Influencer Heat Map")
+st.markdown("""
+<div style="display:flex; align-items:center; gap:12px; margin-bottom:4px;">
+  <span style="font-size:28px; font-weight:700; color:#fff;">Agency 8</span>
+  <span style="font-size:18px; color:#888; font-weight:400;">Influencer Heat Map</span>
+</div>
+""", unsafe_allow_html=True)
 st.markdown("Add a section per client, upload their CSVs, then click **Generate Map**.")
 st.divider()
 
@@ -608,18 +669,6 @@ if st.button("Generate Map", type="primary", use_container_width=True):
         st.session_state["total_posted"]             = len(all_posted)
         st.session_state["total_shopify"]            = len(all_shopify)
         st.session_state["total_unmatched"]          = total_unmatched
-        st.session_state["debug_gift_raw_count"]     = len(gift_events_list)
-        if gift_events_list:
-            sample = gift_events_list[0]
-            st.session_state["debug_gift_sample"] = f"zip={sample.get('zip_code')} | date='{sample.get('gift_date')}' | state_direct='{sample.get('state_direct')}'"
-            if len(gift_events_list) > 2:
-                s2 = gift_events_list[2]
-                st.session_state["debug_gift_sample3"] = f"zip={s2.get('zip_code')} | date='{s2.get('gift_date')}' | state_direct='{s2.get('state_direct')}'"
-            else:
-                st.session_state["debug_gift_sample3"] = "only 2 rows"
-        else:
-            st.session_state["debug_gift_sample"] = "empty"
-            st.session_state["debug_gift_sample3"] = "empty"
 
 # ── Display ───────────────────────────────────────────────────────────────────────
 
@@ -898,32 +947,11 @@ if st.session_state["agg"] is not None:
             st.warning("Gifting Impact needs date data from both CSVs. Missing:\n\n" + "\n\n".join(f"- {m}" for m in missing))
             st.info("Select the correct date columns in each CSV's column settings expander, then click **Generate Map** again.")
         else:
-            st.markdown(
-                "Shows monthly Shopify orders per state with a marker at the first gift date. "
-                "Look for an uptick after the gifting line — that's your signal."
-            )
-
-            with st.expander("🔍 Data check — verify what's loaded", expanded=True):
-                raw_count = st.session_state.get("debug_gift_raw_count", "n/a")
-                sample1   = st.session_state.get("debug_gift_sample", "n/a")
-                sample3   = st.session_state.get("debug_gift_sample3", "n/a")
-                st.caption(f"Raw gift rows with a date (before state mapping): **{raw_count}**")
-                st.caption(f"Row 1 sample: {sample1}")
-                st.caption(f"Row 3 sample: {sample3}")
-                st.write(f"**Shopify events loaded:** {len(shopify_events)} rows")
-                st.write(f"**Gift events loaded:** {len(gift_events)} rows")
-                if not shopify_events.empty:
-                    st.write(f"**Shopify date range:** {shopify_events['order_date'].min().date()} → {shopify_events['order_date'].max().date()}")
-                    shopify_by_state = shopify_events.groupby("state").size().reset_index(name="orders").sort_values("orders", ascending=False)
-                    st.write("**Shopify orders by state:**")
-                    st.dataframe(shopify_by_state, use_container_width=True, hide_index=True)
-                if not gift_events.empty:
-                    st.write(f"**Gift date range:** {gift_events['gift_date'].min().date()} → {gift_events['gift_date'].max().date()}")
-                    gift_by_state = gift_events.groupby("state").size().reset_index(name="gift_rows").sort_values("gift_rows", ascending=False)
-                    st.write("**Gift dated rows by state** (states NOT listed here will show the 'no gift dates' message):")
-                    st.dataframe(gift_by_state, use_container_width=True, hide_index=True)
-                else:
-                    st.warning("No gift events with dates were loaded. Check that the Gift Date column is set to 'Timestamp' (not '(none)') in the Gift App CSV column settings, then click Generate Map again.")
+            st.markdown("""
+<div style="background:#111827; border-left:3px solid #9b59b6; padding:12px 16px; border-radius:0 8px 8px 0; margin-bottom:16px;">
+<b style="color:#fff;">How to read this:</b> <span style="color:#ccc;">Each bar = real customer Shopify orders in that state for one month (A8/gifted orders excluded). The dashed line marks when Agency 8 first gifted influencers in that state. Look for orders increasing after the line.</span>
+</div>
+""", unsafe_allow_html=True)
 
             # Filter to selected clients
             gev = gift_events[gift_events["client"].isin(selected_clients)].copy()
@@ -953,46 +981,75 @@ if st.session_state["agg"] is not None:
             if not shopify_states:
                 st.warning("No states found in Shopify orders. Check that the zip code and date columns are selected correctly.")
             else:
-                col_state, col_tf = st.columns([3, 1])
+                col_state, col_tf, col_view = st.columns([3, 1, 1])
                 with col_state:
                     selected_state = st.selectbox("Select a state to view", shopify_states, key="impact_state")
                 with col_tf:
                     timeframe_options = {"All time": None, "3 months": 3, "6 months": 6, "1 year": 12, "2 years": 24}
                     selected_tf = st.selectbox("Timeframe", list(timeframe_options.keys()), index=0, key="impact_timeframe")
                     tf_months = timeframe_options[selected_tf]
+                with col_view:
+                    chart_view = st.selectbox("Chart view", ["Monthly", "Weekly"], index=0, key="impact_chart_view")
 
                 state_orders = sev[sev["state"] == selected_state].copy()
                 if tf_months:
                     cutoff = pd.Timestamp.now() - pd.DateOffset(months=tf_months)
                     state_orders = state_orders[state_orders["order_date"] >= cutoff]
-                state_orders["month"] = state_orders["order_date"].dt.strftime("%Y-%m")
-                monthly = state_orders.groupby("month").size().reset_index(name="orders").sort_values("month")
 
-                # Build full month range for selected timeframe
-                if tf_months:
-                    range_start = pd.Timestamp.now() - pd.DateOffset(months=tf_months)
+                if chart_view == "Weekly":
+                    state_orders["period"] = state_orders["order_date"].dt.to_period("W").astype(str)
+                    periodic = state_orders.groupby("period").size().reset_index(name="orders").sort_values("period")
+
+                    # Build full week range for selected timeframe
+                    if tf_months:
+                        range_start = pd.Timestamp.now() - pd.DateOffset(months=tf_months)
+                    else:
+                        earliest_gift_ts = min(first_gift_date_by_state.values(), default=None)
+                        earliest_order_ts = sev["order_date"].min() if not sev.empty else None
+                        range_start = min(
+                            [d for d in [earliest_gift_ts, earliest_order_ts] if d is not None],
+                            default=pd.Timestamp.now() - pd.DateOffset(years=1),
+                        )
+                    full_periods = [
+                        p.strftime("%Y-%m-%d") + "/" + (p + pd.tseries.offsets.Week(weekday=6)).strftime("%Y-%m-%d")
+                        for p in pd.date_range(start=range_start, end=pd.Timestamp.now(), freq="W-MON")
+                    ]
+                    period_label = "Week"
+                    xaxis_title = "Week"
+                    chart_title = f"Real Customer Orders — {selected_state} (Weekly, A8/gifted orders excluded)"
                 else:
-                    earliest_gift_ts = min(first_gift_date_by_state.values(), default=None)
-                    earliest_order_ts = sev["order_date"].min() if not sev.empty else None
-                    range_start = min(
-                        [d for d in [earliest_gift_ts, earliest_order_ts] if d is not None],
-                        default=pd.Timestamp.now() - pd.DateOffset(years=1),
-                    )
-                full_months = [
-                    d.strftime("%Y-%m")
-                    for d in pd.date_range(start=range_start.strftime("%Y-%m"), end=pd.Timestamp.now(), freq="MS")
-                ]
-                monthly_full = (
-                    pd.DataFrame({"month": full_months})
-                    .merge(monthly, on="month", how="left")
+                    state_orders["period"] = state_orders["order_date"].dt.strftime("%Y-%m")
+                    periodic = state_orders.groupby("period").size().reset_index(name="orders").sort_values("period")
+
+                    # Build full month range for selected timeframe
+                    if tf_months:
+                        range_start = pd.Timestamp.now() - pd.DateOffset(months=tf_months)
+                    else:
+                        earliest_gift_ts = min(first_gift_date_by_state.values(), default=None)
+                        earliest_order_ts = sev["order_date"].min() if not sev.empty else None
+                        range_start = min(
+                            [d for d in [earliest_gift_ts, earliest_order_ts] if d is not None],
+                            default=pd.Timestamp.now() - pd.DateOffset(years=1),
+                        )
+                    full_periods = [
+                        d.strftime("%Y-%m")
+                        for d in pd.date_range(start=range_start.strftime("%Y-%m"), end=pd.Timestamp.now(), freq="MS")
+                    ]
+                    period_label = "Month"
+                    xaxis_title = "Month"
+                    chart_title = f"Real Customer Orders — {selected_state} (A8/gifted orders excluded)"
+
+                periodic_full = (
+                    pd.DataFrame({"period": full_periods})
+                    .merge(periodic, on="period", how="left")
                     .fillna(0)
                 )
 
                 fig_trend = go.Figure()
                 fig_trend.add_trace(go.Bar(
-                    x=monthly_full["month"].tolist(),
-                    y=monthly_full["orders"].tolist(),
-                    name="Monthly Orders",
+                    x=periodic_full["period"].tolist(),
+                    y=periodic_full["orders"].tolist(),
+                    name=f"{period_label}ly Orders",
                     marker_color=SHOPIFY_COLOR,
                 ))
 
@@ -1000,16 +1057,36 @@ if st.session_state["agg"] is not None:
                 if selected_state in gifted_states_agg:
                     gift_date = first_gift_date_by_state.get(selected_state)
                     if gift_date:
-                        gift_month_str = gift_date.strftime("%Y-%m")
-                        if gift_month_str in monthly_full["month"].values:
+                        if chart_view == "Weekly":
+                            # Find closest week label to the gift date
+                            gift_label = None
+                            gift_ts = pd.Timestamp(gift_date)
+                            for lbl in periodic_full["period"].tolist():
+                                try:
+                                    week_start = pd.Timestamp(lbl.split("/")[0])
+                                    week_end   = pd.Timestamp(lbl.split("/")[1])
+                                    if week_start <= gift_ts <= week_end:
+                                        gift_label = lbl
+                                        break
+                                except Exception:
+                                    continue
+                            if gift_label is None and len(periodic_full) > 0:
+                                # fallback: nearest week start
+                                diffs = [(abs((pd.Timestamp(lbl.split("/")[0]) - pd.Timestamp(gift_date)).days), lbl) for lbl in periodic_full["period"].tolist() if "/" in lbl]
+                                if diffs:
+                                    gift_label = min(diffs, key=lambda x: x[0])[1]
+                        else:
+                            gift_label = gift_date.strftime("%Y-%m")
+
+                        if gift_label and gift_label in periodic_full["period"].values:
                             fig_trend.add_shape(
                                 type="line",
-                                x0=gift_month_str, x1=gift_month_str,
+                                x0=gift_label, x1=gift_label,
                                 y0=0, y1=1, yref="paper",
                                 line=dict(dash="dash", color="white", width=2),
                             )
                             fig_trend.add_annotation(
-                                x=gift_month_str, y=0.97, yref="paper",
+                                x=gift_label, y=0.97, yref="paper",
                                 text=f"First gift: {gift_date.strftime('%b %Y')}",
                                 showarrow=False, xanchor="left",
                                 font=dict(color="white", size=11),
@@ -1020,19 +1097,35 @@ if st.session_state["agg"] is not None:
                     st.caption(f"ℹ️ No gifting recorded in {selected_state} yet — this is an untapped market.")
 
                 fig_trend.update_layout(
+                    title=dict(text=chart_title, font=dict(size=14)),
                     height=420,
-                    margin=dict(t=30, b=0, l=0, r=0),
-                    xaxis_title="Month",
-                    yaxis_title="Orders",
+                    margin=dict(t=50, b=0, l=0, r=0),
+                    xaxis_title=xaxis_title,
+                    yaxis_title="Customer Orders",
                     xaxis=dict(type="category"),
                 )
                 st.plotly_chart(fig_trend, use_container_width=True)
 
+                # ── Comparison window selector ─────────────────────────────────────
+                window_options = {"30 days": 30, "60 days": 60, "90 days": 90, "All time": None}
+                selected_window_label = st.selectbox(
+                    "Comparison window",
+                    list(window_options.keys()),
+                    index=2,  # default "90 days"
+                    key="impact_window",
+                )
+                window_days = window_options[selected_window_label]
+
                 # Summary table: all states, orders before vs after first gift
                 merged = sev.merge(first_gift, on=["client", "state"], how="inner")
                 merged["days_from_gift"] = (merged["order_date"] - merged["first_gift_date"]).dt.days
-                before_all = merged[merged["days_from_gift"] < 0]
-                after_all  = merged[merged["days_from_gift"] >= 0]
+
+                if window_days is not None:
+                    before_all = merged[(merged["days_from_gift"] >= -window_days) & (merged["days_from_gift"] < 0)]
+                    after_all  = merged[(merged["days_from_gift"] >= 0) & (merged["days_from_gift"] < window_days)]
+                else:
+                    before_all = merged[merged["days_from_gift"] < 0]
+                    after_all  = merged[merged["days_from_gift"] >= 0]
 
                 before_stats = before_all.groupby(["client", "state"]).size().reset_index(name="orders_before")
                 after_stats  = after_all.groupby(["client", "state"]).size().reset_index(name="orders_after")
@@ -1043,18 +1136,36 @@ if st.session_state["agg"] is not None:
                     (impact["orders_after"] - impact["orders_before"])
                     / impact["orders_before"].replace(0, float("nan")) * 100
                 ).round(1)
+
+                # Rate (orders/day) column
+                if window_days is not None:
+                    impact["rate"] = (impact["orders_after"] / window_days).round(2)
+                else:
+                    # For "All time", compute days available after first gift up to today
+                    today = pd.Timestamp.now()
+                    impact["days_available"] = (today - pd.to_datetime(impact["first_gift_date"])).dt.days.clip(lower=1)
+                    impact["rate"] = (impact["orders_after"] / impact["days_available"]).round(4)
+
                 impact = impact.sort_values("orders_after", ascending=False).reset_index(drop=True)
-                impact["first_gift_date"] = impact["first_gift_date"].dt.strftime("%Y-%m-%d")
+                impact["first_gift_date"] = pd.to_datetime(impact["first_gift_date"]).dt.strftime("%Y-%m-%d")
                 impact.index += 1
 
+                if window_days is not None:
+                    subtitle = f"comparing {window_days} days before vs {window_days} days after first gift"
+                else:
+                    subtitle = "comparing all time before vs all time after first gift"
+
                 st.subheader("All States — Orders Before vs After First Gift")
-                display = impact[["client", "state", "first_gift_date", "orders_before", "orders_after", "change"]].copy()
-                display.columns = ["Client", "State", "First Gift Date", "Orders Before Gifting", "Orders After Gifting", "Change %"]
+                st.caption(subtitle)
+                display_cols = ["client", "state", "first_gift_date", "orders_before", "orders_after", "change", "rate"]
+                display = impact[display_cols].copy()
+                display.columns = ["Client", "State", "First Gift Date", "Orders Before Gifting", "Orders After Gifting", "Change %", "Rate (orders/day)"]
                 st.dataframe(
                     display.style.format({
                         "Orders Before Gifting": "{:.0f}",
                         "Orders After Gifting": "{:.0f}",
                         "Change %": "{:+.1f}%",
+                        "Rate (orders/day)": "{:.4f}",
                     }),
                     use_container_width=True,
                 )
