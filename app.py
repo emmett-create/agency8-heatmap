@@ -269,7 +269,7 @@ def build_volume_map(agg, client_colors):
             ))
 
     fig.update_layout(
-        mapbox_style="carto-positron",
+        mapbox_style="carto-darkmatter",
         mapbox_center={"lat": 38.5, "lon": -96},
         mapbox_zoom=3,
         height=620,
@@ -331,7 +331,7 @@ def build_conversion_map(zip_stats):
     ))
 
     fig.update_layout(
-        mapbox_style="carto-positron",
+        mapbox_style="carto-darkmatter",
         mapbox_center={"lat": 38.5, "lon": -96},
         mapbox_zoom=3,
         height=620,
@@ -904,6 +904,26 @@ if st.session_state["agg"] is not None:
 
             st.divider()
 
+            # ── State Opportunity Score ────────────────────────────────────────────
+            shopify_by_state_opp = agg[agg["type"] == "Shopify Customers"].groupby("state")["count"].sum().reset_index(name="shopify_orders")
+            gifted_by_state_opp = agg[agg["type"] == "Gifted"].groupby("state")["count"].sum().reset_index(name="gifted_count")
+            opp = shopify_by_state_opp.merge(gifted_by_state_opp, on="state", how="outer").fillna(0)
+
+            max_shopify_opp = opp["shopify_orders"].max() or 1
+            max_gifted_opp = opp["gifted_count"].max() or 1
+            opp["shopify_score"] = (opp["shopify_orders"] / max_shopify_opp * 100).round(1)
+            opp["gift_score"] = (opp["gifted_count"] / max_gifted_opp * 100).round(1)
+            opp["opportunity_score"] = ((opp["shopify_score"] * 0.6) + ((100 - opp["gift_score"]) * 0.4)).round(1)
+            opp = opp.sort_values("opportunity_score", ascending=False).head(15).reset_index(drop=True)
+            opp.index += 1
+            opp.columns = ["State", "Shopify Orders", "Gifted Influencers", "Shopify Score", "Gift Score", "Opportunity Score"]
+
+            st.subheader("State Opportunity Score")
+            st.caption("High Shopify demand + low gifting coverage = highest priority states to target next")
+            st.dataframe(opp[["State", "Shopify Orders", "Gifted Influencers", "Opportunity Score"]], use_container_width=True)
+
+            st.divider()
+
             # ── Gifted vs Shopify Customers bar chart ─────────────────────────────
             st.subheader("Gifted vs Shopify Customers by State")
             st.caption("Side-by-side comparison — shows where gifting activity aligns with (or lags behind) your customer base.")
@@ -1096,6 +1116,17 @@ if st.session_state["agg"] is not None:
                 else:
                     st.caption(f"ℹ️ No gifting recorded in {selected_state} yet — this is an untapped market.")
 
+                # Moving average trend line
+                if len(periodic_full) >= 4:
+                    ma = periodic_full["orders"].rolling(window=4, min_periods=1).mean().round(2)
+                    fig_trend.add_trace(go.Scatter(
+                        x=periodic_full["period"].tolist(),
+                        y=ma.tolist(),
+                        name="4-period avg",
+                        mode="lines",
+                        line=dict(color="#f59e0b", width=2, dash="dot"),
+                    ))
+
                 fig_trend.update_layout(
                     title=dict(text=chart_title, font=dict(size=14)),
                     height=420,
@@ -1160,16 +1191,126 @@ if st.session_state["agg"] is not None:
                 display_cols = ["client", "state", "first_gift_date", "orders_before", "orders_after", "change", "rate"]
                 display = impact[display_cols].copy()
                 display.columns = ["Client", "State", "First Gift Date", "Orders Before Gifting", "Orders After Gifting", "Change %", "Rate (orders/day)"]
-                st.dataframe(
-                    display.style.format({
+
+                # Color-code Change % column: apply styling on numeric values before formatting
+                def _color_change_numeric(val):
+                    if pd.isna(val):
+                        return ""
+                    if val > 0:
+                        return "color: #22c55e; font-weight: 600"
+                    elif val < 0:
+                        return "color: #ef4444; font-weight: 600"
+                    return ""
+
+                styled_display = (
+                    display.style
+                    .applymap(_color_change_numeric, subset=["Change %"])
+                    .format({
                         "Orders Before Gifting": "{:.0f}",
                         "Orders After Gifting": "{:.0f}",
-                        "Change %": "{:+.1f}%",
+                        "Change %": lambda v: "None" if pd.isna(v) else f"{v:+.1f}%",
                         "Rate (orders/day)": "{:.4f}",
-                    }),
+                    })
+                )
+                st.dataframe(
+                    styled_display,
                     use_container_width=True,
                 )
                 st.caption(
                     "⚠️ Correlation, not causation — order changes after gifting may reflect "
                     "seasonality, ads, or other factors. Use as a directional signal."
                 )
+
+                # Export button for the before/after table
+                csv_data = display.to_csv(index=False)
+                st.download_button(
+                    label="Download table as CSV",
+                    data=csv_data,
+                    file_name="gifting_impact.csv",
+                    mime="text/csv",
+                    key="download_impact_csv",
+                )
+
+                # ── Gifting Impact by Time Bucket ─────────────────────────────────
+                def assign_bucket(days):
+                    if days < 0:
+                        return "Before"
+                    elif days <= 30:
+                        return "0–30 days after"
+                    elif days <= 60:
+                        return "31–60 days after"
+                    elif days <= 90:
+                        return "61–90 days after"
+                    else:
+                        return "91–180 days after"
+
+                merged["bucket"] = merged["days_from_gift"].apply(assign_bucket)
+                bucket_stats = (
+                    merged[merged["bucket"] != "Before"]
+                    .groupby(["state", "bucket"])
+                    .size()
+                    .reset_index(name="orders")
+                    .pivot(index="state", columns="bucket", values="orders")
+                    .fillna(0)
+                    .astype(int)
+                    .reset_index()
+                )
+                # Reorder columns
+                bucket_cols = ["state", "0–30 days after", "31–60 days after", "61–90 days after", "91–180 days after"]
+                bucket_cols = [c for c in bucket_cols if c in bucket_stats.columns]
+                bucket_stats = bucket_stats[bucket_cols]
+                st.subheader("Orders by Time Since First Gift")
+                st.caption("Shows how quickly orders pick up after gifting in each state")
+                st.dataframe(bucket_stats, use_container_width=True, hide_index=True)
+
+                # ── Compare States ────────────────────────────────────────────────
+                st.markdown("### Compare States")
+                compare_states = st.multiselect(
+                    "Select up to 4 states to compare",
+                    shopify_states,
+                    max_selections=4,
+                    key="compare_states",
+                )
+                if compare_states:
+                    fig_compare = go.Figure()
+                    colors = ["#9b59b6", "#3b82f6", "#22c55e", "#f59e0b"]
+                    # Always use monthly periods for comparison
+                    if tf_months:
+                        cmp_range_start = pd.Timestamp.now() - pd.DateOffset(months=tf_months)
+                    else:
+                        earliest_gift_ts_cmp = min(first_gift_date_by_state.values(), default=None)
+                        earliest_order_ts_cmp = sev["order_date"].min() if not sev.empty else None
+                        cmp_range_start = min(
+                            [d for d in [earliest_gift_ts_cmp, earliest_order_ts_cmp] if d is not None],
+                            default=pd.Timestamp.now() - pd.DateOffset(years=1),
+                        )
+                    full_periods_monthly = [
+                        d.strftime("%Y-%m")
+                        for d in pd.date_range(start=cmp_range_start.strftime("%Y-%m"), end=pd.Timestamp.now(), freq="MS")
+                    ]
+                    for idx, state in enumerate(compare_states):
+                        s_orders = sev[sev["state"] == state].copy()
+                        s_orders["period"] = s_orders["order_date"].dt.strftime("%Y-%m")
+                        s_monthly = s_orders.groupby("period").size().reset_index(name="orders")
+                        s_full = (
+                            pd.DataFrame({"period": full_periods_monthly})
+                            .merge(s_monthly, on="period", how="left")
+                            .fillna(0)
+                        )
+                        fig_compare.add_trace(go.Scatter(
+                            x=s_full["period"].tolist(),
+                            y=s_full["orders"].tolist(),
+                            name=state,
+                            mode="lines+markers",
+                            line=dict(color=colors[idx % len(colors)], width=2),
+                            marker=dict(size=5),
+                        ))
+                    fig_compare.update_layout(
+                        height=380,
+                        margin=dict(t=30, b=0, l=0, r=0),
+                        xaxis_title="Month",
+                        yaxis_title="Customer Orders",
+                        xaxis=dict(type="category"),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                    )
+                    st.plotly_chart(fig_compare, use_container_width=True)
